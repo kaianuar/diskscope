@@ -166,23 +166,31 @@ FAIL if: No test plan, or tests are an afterthought.
 ---
 
 REVIEW OUTPUT FORMAT:
-List concrete BLOCKING problems first (each with severity: BLOCKER/MAJOR/MINOR), then any NOTES.
-End with EXACTLY one line: PASS or FAIL
+List findings sorted by severity, tagging EVERY finding with exactly one of:
+- [P0] CRITICAL BLOCKER: security vulnerability, data loss/corruption, crash, or a
+  clear violation of a REQUIREMENT acceptance criterion. Plan MUST NOT proceed.
+- [P1] MAJOR BLOCKER: a real architecture/correctness defect that breaks the build
+  or a REQUIREMENT acceptance criterion. Plan MUST NOT proceed until fixed.
+- [P2] should fix: real issue that doesn't currently break a requirement/build but
+  could become P0/P1 if left. Tracked; plan MAY proceed.
+- [P3] good to fix: refactor/clarity/robustness improvement. Tracked; MAY proceed.
+- [P4] nice-to-have / minor UX / stylistic preference. Never blocks. MAY proceed.
+End with EXACTLY one line: PASS if there are NO P0/P1 findings, else FAIL.
 
 VETO DISCIPLINE — these rules govern your ENTIRE review. Violating them is itself a review defect:
 - REQUIREMENTS ARE THE HIGHEST AUTHORITY. The REQUIREMENTS block asks for specific technologies and
   capabilities. If the plan explicitly follows the requirements (e.g. it uses the mandated GUI stack,
-  libs, and features), you MUST NOT FAIL it for those choices. Requirement-mandated choices are NEVER
-  blockers — at most a NOTE suggesting how to implement them well. Do not contradict the requirements.
+  libs, and features), you MUST NOT FAIL it for those choices. Requirement-mandated choices are at most
+  P3, never P0/P1. Do not contradict the requirements.
 - NO SELF-CONTRADICTION. Do not reject a plan in this round for something a PRIOR review round told the
   builder to change, or for a requirement-mandated tradeoff the plan already documented with justification.
   If the plan already resolved an earlier finding, acknowledge it as resolved.
 - SCOPE-LOCK. The plan defines PHASES. Only the phase currently under review (or the explicitly
-  cross-cutting architecture) may carry BLOCKERS. Issues confined to a LATER phase are NOTES until that
+  cross-cutting architecture) may carry P0/P1. Issues confined to a LATER phase are P3/P4 until that
   phase is reviewed. Do not invent blockers from unbuilt later-phase detail.
-- SEVERITY HONESTY. BLOCKER = correctness, security, soundness, or a direct requirements conflict that
+- SEVERITY HONESTY. P0/P1 = correctness, security, soundness, or a direct requirements conflict that
   will break the build. A preference for a different design, a style choice, or a deferred/deemed-later
-  item is a NOTE, never a BLOCKER. If the only remaining objections are NOTES, your verdict is PASS.
+  item is P3 or P4, never P0/P1. If the only remaining objections are P3/P4, your verdict is PASS.
 
 PLAN TO REVIEW:
 {{PLAN_CONTENT}}
@@ -294,6 +302,15 @@ fi
 
 # Extract verdict
 VERDICT=$(grep -iE '(^|[^A-Za-z])(PASS|FAIL)([^A-Za-z]|$)' /tmp/gate0_verdict.txt | tail -1 | grep -oEi 'PASS|FAIL' | tail -1 | tr '[:lower:]' '[:upper:]')
+
+# Extract NON-BLOCKING findings (P2/P3/P4) into the shared notes file so the
+# pipeline can surface them to the human. P0/P1 gate; P2+ are tracked, not blocking.
+REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE:-/tmp/review_notes.txt}"
+{
+  echo ""
+  echo "===== PLAN REVIEW NOTES ($(date +%H:%M:%S)) ====="
+  grep -E '^\s*\[P[234]\]' /tmp/gate0_verdict.txt 2>/dev/null
+} >> "${REVIEW_NOTES_FILE}" 2>/dev/null
 
 # Append this round's verdict to the review history so the next round's critic
 # can see what it already asked for (no self-contradiction from evidence).

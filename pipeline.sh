@@ -42,12 +42,30 @@ set -uo pipefail
 
 BUILDER_MODEL="${BUILDER_MODEL:-xiaomi-token-plan-sgp/mimo-v2.5-pro}"
 MAX_PLAN_ROUNDS="${MAX_PLAN_ROUNDS:-5}"
-MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-5}"
+MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-8}"
 FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"
 GATE0_VERDICT="/tmp/gate0_verdict.txt"
 RUNLOG="/tmp/last_gate_failure.txt"
+REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE:-/tmp/review_notes.txt}"
 
 PROJ_ROOT="$(pwd)"
+
+# Present any outstanding NON-BLOCKING (P2/P3/P4) review findings collected across
+# the phases, so the HUMAN can decide how to handle them (fix now, defer, or accept).
+present_outstanding_notes() {
+  if [ -s "${REVIEW_NOTES_FILE}" ]; then
+    echo ""
+    echo "================================================================"
+    echo " OUTSTANDING NON-BLOCKING REVIEW FINDINGS (P2/P3/P4)"
+    echo " These did not block any phase. Review and decide how to handle them."
+    echo "================================================================"
+    cat "${REVIEW_NOTES_FILE}"
+    echo "--------------------------------------------------------------"
+  else
+    echo ""
+    echo "==> No outstanding non-blocking (P2/P3/P4) findings."
+  fi
+}
 
 # ---- safe runner: bounded omp call so the pipeline never hangs on --print ----
 run_omp() { # prompt...  (extra positional args are the task text)
@@ -128,6 +146,10 @@ if [ ! -f "$REQUIREMENTS" ]; then
   echo "xx requirements file not found: $REQUIREMENTS" >&2; exit 1
 fi
 
+# Start a fresh outstanding-notes file for this run (cleared so P2/P3/P4 findings
+# don't leak in from a previous run).
+rm -f "${REVIEW_NOTES_FILE}"
+
 # ============================================================================
 # PHASE 0 — PLAN (planning only: builder may touch ONLY plan.md)
 # ============================================================================
@@ -155,7 +177,7 @@ while [ "$plan_round" -lt "$MAX_PLAN_ROUNDS" ]; do
   # which would try to build code before the plan is approved).
   rm -f "${GATE0_VERDICT}" "${FINDINGS_FILE}"
   set +e
-  bash "$PROJ_ROOT/tests/gate0_plan_review.sh"
+  REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" bash "$PROJ_ROOT/tests/gate0_plan_review.sh"
   PLAN_EC=$?
   set -e
 
@@ -259,7 +281,7 @@ for PHASE in "${PHASES[@]}"; do
       break
     fi
     set +e
-    CRITIC_MODEL="${CRITIC_MODEL:-z-ai/glm-5.2}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
+    REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" CRITIC_MODEL="${CRITIC_MODEL:-z-ai/glm-5.2}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
     C_EC=${PIPESTATUS[0]}
     set -e
     if [ "$C_EC" -eq 0 ]; then
@@ -286,10 +308,12 @@ if [ "$all_green" -eq 1 ]; then
   echo "================================================================"
   echo " ALL PHASES PASSED. Proceed to steer/commit."
   echo "================================================================"
+  present_outstanding_notes
   exit 0
 fi
 
 echo ""
 echo "!! Build did not fully pass. See ${FINDINGS_FILE} for the latest critic findings."
 echo "   Rerun with PHASE_FROM=<n> to resume from a given phase, or fix manually."
+present_outstanding_notes
 exit 1
