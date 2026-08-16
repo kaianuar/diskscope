@@ -1,0 +1,36 @@
+# deps / build
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+target/
+
+# databases / runtime state (NEVER commit live data or lock files)
+*.db
+*.sqlite
+*.sqlite3
+*-shm
+*-wal
+*-journal
+
+# pipeline / test artifacts
+/tmp/
+test-results.json
+*.log
+coverage/
+playwright-report/
+test-results/
+
+# screenshots that are QA artifacts (uncomment to exclude debug shots; keep if you
+# want them in the repo as documentation)
+# screenshots/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
