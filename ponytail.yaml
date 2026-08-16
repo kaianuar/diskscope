@@ -1,0 +1,159 @@
+# Ponytail Configuration
+# This file configures Ponytail for this project.
+# See https://github.com/dietrichgebert/ponytail for documentation.
+
+version: "1.0"
+
+# Project metadata
+project:
+  name: "{{PROJECT_NAME}}"
+  description: "{{PROJECT_DESCRIPTION}}"
+  language: "{{LANGUAGE}}" # typescript, python, etc.
+
+# Supported IDE agents (Ponytail generates configs for these)
+agents:
+  - cursor
+  - opencode
+  - claude-code
+  - codex
+  - devin
+  - qoder
+  - kiro
+  - grok
+  - grok-code-fast
+  - cline
+  - openclaw
+
+# Agent instruction directories (relative to project root)
+directories:
+  agents: ".agents"
+  skills: ".agents/skills"
+  rules: ".agents/rules"
+  contexts: ".agents/contexts"
+  templates: ".agents/templates"
+
+# Skills - reusable agent capabilities
+skills:
+  - name: "write-test"
+    description: "Write a test following TDD and AAA pattern"
+    template: "templates/write-test.md"
+  
+  - name: "refactor"
+    description: "Refactor code following Karpathy principles"
+    template: "templates/refactor.md"
+  
+  - name: "write-docs"
+    description: "Write documentation following project conventions"
+    template: "templates/write-docs.md"
+
+# Rule categories
+rules:
+  # Karpathy Principles (enforced by critic)
+  - id: "karpathy-explicit"
+    description: "Explicit > Implicit — no magic, no hidden behavior"
+    severity: error
+    pattern: "explicit.*implicit|magic|hidden"
+    
+  - id: "karpathy-types"
+    description: "Types everywhere — type hints on all functions, no any/any without comment"
+    severity: error
+    pattern: "type.*hint|type.*annotation|any\b"
+    
+  - id: "karpathy-small-functions"
+    description: "Small functions — one thing per function, <50 lines ideal"
+    severity: warning
+    pattern: "function.*length|lines.*50"
+    
+  - id: "karpathy-no-cleverness"
+    description: "No cleverness — boring code > clever code"
+    severity: warning
+    pattern: "clever|trick|hack"
+    
+  - id: "karpathy-explicit-errors"
+    description: "Explicit error handling — no bare catch/except"
+    severity: error
+    pattern: "catch\s*\(|except\s*:"
+    
+  - id: "karpathy-tests-as-docs"
+    description: "Tests as documentation — names describe behavior"
+    severity: error
+    pattern: "test.*name|describe|it\("
+
+  # Ponytail-specific rules
+  - id: "ponytail-hexagonal"
+    description: "Hexagonal architecture — domain at center, adapters at edges"
+    severity: error
+    
+  - id: "ponytail-dependency-inversion"
+    description: "Dependency inversion — domain depends on abstractions"
+    severity: error
+    
+  - id: "ponytail-typescript-strict"
+    description: "Strict TypeScript — strict: true, noImplicitAny: true"
+    severity: error
+    
+  - id: "ponytail-conventional-commits"
+    description: "Conventional commits (feat:, fix:, refactor:, test:, docs:, chore:, perf:)"
+    severity: error
+    
+  - id: "ponytail-tdd"
+    description: "TDD mandatory — test first, then implement, then refactor"
+    severity: error
+    
+  - id: "ponytail-one-change-per-commit"
+    description: "One logical change per commit"
+    severity: error
+    
+  - id: "ponytail-typescript-strict"
+    description: "TypeScript strict mode — no implicit any"
+    severity: error
+    
+    - id: "ponytail-no-any"
+      description: "No any/any without comment"
+      severity: error
+    
+    - id: "ponytail-no-bare-catch"
+      description: "No bare catch/except"
+      severity: error
+    
+    - id: "ponytail-no-magic"
+      description: "No magic numbers/strings — named constants"
+      severity: warning
+    
+    - id: "ponytail-explicit-errors"
+      description: "Explicit error handling with context"
+      severity: error
+
+# IDE-specific configurations
+ide:
+  cursor:
+    rules_dir: ".cursor/rules"
+    settings:
+      editor.formatOnSave: true
+      editor.codeActionsOnSave:
+        source.fixAll: explicit
+  
+  opencode:
+    rules_dir: .opencode/rules
+  
+  claude-code:
+    rules_dir: .claude-plugin/rules
+  
+  codex:
+    rules_dir: .codex-plugin/rules
+
+# Validation
+validation:
+  pre_commit: true
+  ci: true
+  gates:
+    - gate0_plan_review
+    - gate1_tests
+    - gate2_adversarial_review
+    - gate3_visual_e2e
+
+# Version
+version_info:
+  ponytail_version: "1.0"
+  generated_by: "omp-agent scaffold.sh"
+  generated_at: "{{TIMESTAMP}}"
