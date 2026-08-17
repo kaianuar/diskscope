@@ -1,3 +1,5 @@
+//! Integration tests for the DiskScope CLI binary.
+
 use std::process::Command;
 
 fn cli_bin() -> String {

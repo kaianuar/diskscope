@@ -1,3 +1,5 @@
+//! Domain-level unit tests for scan-engine.
+
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 

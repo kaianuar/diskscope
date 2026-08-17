@@ -1,3 +1,5 @@
+//! Integration tests for the scan-engine crate.
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -43,7 +45,7 @@ fn debug_max_depth() {
     let tree = scanner.scan(dir.path(), &opts).unwrap();
 
     fn count_all(node: &FileNode) -> usize {
-        1 + node.children.iter().map(|c| count_all(c)).sum::<usize>()
+        1 + node.children.iter().map(count_all).sum::<usize>()
     }
     eprintln!("max_depth=1: file_count={}, total_size={}, all_nodes={}",
         tree.file_count(), tree.total_size(), count_all(&tree.root));

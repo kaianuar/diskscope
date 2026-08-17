@@ -1,3 +1,5 @@
+//! DiskScope CLI — fast cross-platform disk space analyzer.
+
 use std::path::PathBuf;
 use std::process;
 
