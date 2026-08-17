@@ -227,6 +227,14 @@ SEVERITY DISCIPLINE — this is the SINGLE most important rule for keeping the r
   rounds. Re-raising the same item you already flagged is a review defect.
 - Genuine P1 (blocking) examples: a requirement is unaddressed, a security hole, a contradiction
   that would break implementation, an impossible design (e.g. REST SDK used where realtime is required).
+
+ACTIONABLE FEEDBACK — every P0/P1 finding MUST end with a concrete remediation on its own line:
+  `-> FIX: <exactly what the builder should write/add/change, with specific detail>`
+  Example: "-> FIX: add an 'Architecture Justification' section that states in 3-5 concrete points
+  (a) why Rust over Go/C++/Zig, (b) why Tauri v2 over Electron (smaller binary/memory), (c) why hexagonal
+  isolation, and (d) why egui for the treemap. Point each at the requirement it serves."
+  A finding without a concrete `-> FIX:` remediation is itself a review defect. Vague rejections
+  ("this is not justified enough") are not acceptable — tell the builder precisely what to add.
 PROMPT_EOF
 
 # Build the actual prompt with substitutions

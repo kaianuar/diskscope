@@ -157,6 +157,11 @@ idea is P3 or P4 - never P0/P1. If a design choice is not contradicted by the
 requirements, treat it as P3 at most.
 
 Tag format: start each finding line with [P0], [P1], [P2], [P3], or [P4].
+Every P0/P1 finding MUST end with a concrete remediation on its own line:
+  `-> FIX: <exactly what to change in the code, with specific detail>`
+  Example: "-> FIX: in filter.rs line 14, change the `Code` match arm to add `yml` after `yaml`."
+  A P0/P1 without a `-> FIX:` line is a review defect. Never just say "this is broken" — tell the
+  builder precisely what to change so the next round can satisfy it.
 
 Review the diff harshly for correctness, logic, security, edge cases, and test coverage.
 List findings sorted by severity (P0 first, then P1, P2, P3, P4).
