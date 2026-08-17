@@ -1,18 +1,15 @@
 use std::path::PathBuf;
 use std::process;
 
-use clap::{CommandFactory, Parser, Subcommand, ValueHint};
+use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
 
-use scan_engine::domain::filter::Filter;
+use scan_engine::format;
 use scan_engine::scanner::Scanner;
-use scan_engine::scanner::options::ScanOptions;
-use scan_engine::domain::opts::ScanOpts;
-use scan_engine::domain::format::OutputFormat;
-use scan_engine::domain::sort::SortKey;
+use scan_engine::{OutputFormat, ScanOptions, SortDir, SortKey};
 
 #[derive(Parser)]
-#[command(name = "diskscope", version, about = "Fast cross-platform disk space analyzer")]
+#[command(name = "diskscope", version, about = "Fast disk space analyzer")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -20,19 +17,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scan a directory and display disk usage
+    /// Scan a directory and display results
     Scan {
         /// Path to scan (defaults to current directory)
-        #[arg(value_hint = ValueHint::DirPath, default_value = ".")]
+        #[arg(default_value = ".")]
         path: PathBuf,
 
         /// Output format
-        #[arg(long, value_enum, default_value_t = FormatArg::Table)]
+        #[arg(short, long, value_enum, default_value_t = FormatArg::Table)]
         format: FormatArg,
 
-        /// Sort order
-        #[arg(long, value_enum)]
+        /// Sort key
+        #[arg(short, long, value_enum)]
         sort: Option<SortArg>,
+
+        /// Sort direction
+        #[arg(long, value_enum)]
+        sort_dir: Option<SortDirArg>,
 
         /// Minimum file size in bytes
         #[arg(long)]
@@ -42,12 +43,16 @@ enum Commands {
         #[arg(long)]
         max_depth: Option<u32>,
 
-        /// Glob pattern to match file names
-        #[arg(long)]
+        /// Name pattern filter (substring match)
+        #[arg(short, long)]
         pattern: Option<String>,
+
+        /// Respect .gitignore files
+        #[arg(long, default_value_t = true)]
+        gitignore: bool,
     },
 
-    /// Show a quick summary of disk usage
+    /// Show a quick summary of disk usage for a path
     Summary {
         /// Path to summarize
         path: PathBuf,
@@ -61,31 +66,32 @@ enum Commands {
     },
 }
 
-#[derive(clap::ValueEnum, Clone, Copy)]
+#[derive(ValueEnum, Clone, Copy)]
 enum FormatArg {
-    Json,
     Table,
+    Json,
     Jsonl,
     Tree,
 }
 
-#[derive(clap::ValueEnum, Clone, Copy)]
+#[derive(ValueEnum, Clone, Copy)]
 enum SortArg {
-    #[value(name = "size-desc")]
-    SizeDesc,
-    #[value(name = "size-asc")]
-    SizeAsc,
-    #[value(name = "name-asc")]
-    NameAsc,
-    #[value(name = "name-desc")]
-    NameDesc,
+    Size,
+    Name,
+    Modified,
+}
+
+#[derive(ValueEnum, Clone, Copy)]
+enum SortDirArg {
+    Asc,
+    Desc,
 }
 
 impl From<FormatArg> for OutputFormat {
-    fn from(arg: FormatArg) -> Self {
-        match arg {
-            FormatArg::Json => OutputFormat::Json,
+    fn from(f: FormatArg) -> Self {
+        match f {
             FormatArg::Table => OutputFormat::Table,
+            FormatArg::Json => OutputFormat::Json,
             FormatArg::Jsonl => OutputFormat::Jsonl,
             FormatArg::Tree => OutputFormat::Tree,
         }
@@ -93,12 +99,20 @@ impl From<FormatArg> for OutputFormat {
 }
 
 impl From<SortArg> for SortKey {
-    fn from(arg: SortArg) -> Self {
-        match arg {
-            SortArg::SizeDesc => SortKey::SizeDesc,
-            SortArg::SizeAsc => SortKey::SizeAsc,
-            SortArg::NameAsc => SortKey::NameAsc,
-            SortArg::NameDesc => SortKey::NameDesc,
+    fn from(s: SortArg) -> Self {
+        match s {
+            SortArg::Size => SortKey::Size,
+            SortArg::Name => SortKey::Name,
+            SortArg::Modified => SortKey::Modified,
+        }
+    }
+}
+
+impl From<SortDirArg> for SortDir {
+    fn from(d: SortDirArg) -> Self {
+        match d {
+            SortDirArg::Asc => SortDir::Asc,
+            SortDirArg::Desc => SortDir::Desc,
         }
     }
 }
@@ -111,127 +125,64 @@ fn main() {
             path,
             format,
             sort,
+            sort_dir,
             min_size,
             max_depth,
             pattern,
+            gitignore,
         } => {
-            run_scan(path, format, sort, min_size, max_depth, pattern);
-        }
-        Commands::Summary { path } => {
-            run_summary(path);
-        }
-        Commands::Completions { shell } => {
-            run_completions(shell);
-        }
-    }
-}
-
-fn run_scan(
-    path: PathBuf,
-    format: FormatArg,
-    sort: Option<SortArg>,
-    min_size: Option<u64>,
-    max_depth: Option<u32>,
-    pattern: Option<String>,
-) {
-    if !path.exists() {
-        eprintln!("error: path does not exist: {}", path.display());
-        process::exit(1);
-    }
-
-    let scanner = Scanner::new(ScanOptions::default());
-
-    let mut opts = ScanOpts::new();
-    opts.format = format.into();
-
-    if let Some(s) = sort {
-        opts.sort = Some(s.into());
-    }
-
-    if let Some(min) = min_size {
-        opts.filters.push(Filter::MinSize(min));
-    }
-
-    if let Some(depth) = max_depth {
-        opts.depth = Some(depth);
-    }
-
-    if let Some(pat) = pattern {
-        opts.filters.push(Filter::NamePattern(pat));
-    }
-
-    match scanner.scan(&path, &opts) {
-        Ok(tree) => {
-            // Apply domain-level filters and sorting
-            let root = opts.apply(&tree.root).unwrap_or(tree.root);
-            match root.format(opts.format) {
-                Ok(output) => println!("{}", output),
+            let opts = ScanOptions {
+                max_depth,
+                min_size,
+                respect_gitignore: gitignore,
+                pattern,
+                ..Default::default()
+            };
+            let scanner = Scanner::new(opts);
+            let result = match scanner.scan(&path) {
+                Ok(r) => r,
                 Err(e) => {
-                    eprintln!("error: {}", e);
+                    eprintln!("Error: {e}");
                     process::exit(1);
                 }
-            }
-        }
-        Err(e) => {
-            eprintln!("error: {}", e);
-            process::exit(1);
-        }
-    }
-}
+            };
 
-fn run_summary(path: PathBuf) {
-    if !path.exists() {
-        eprintln!("error: path does not exist: {}", path.display());
-        process::exit(1);
-    }
-
-    let scanner = Scanner::new(ScanOptions::default());
-    let mut opts = ScanOpts::new();
-    opts.format = OutputFormat::Table;
-
-    match scanner.scan(&path, &opts) {
-        Ok(tree) => {
-            let total = tree.total_size();
-            let count = tree.file_count();
-            println!("Disk usage summary for: {}", path.display());
-            println!("  Total size:  {} bytes ({})", total, human_size(total));
-            println!("  File count:  {}", count);
-            println!();
-            println!("Top 10 largest entries:");
-            let mut entries: Vec<_> = tree.root.children.iter().collect();
-            entries.sort_by_key(|e| std::cmp::Reverse(e.total_size()));
-            for entry in entries.iter().take(10) {
-                let marker = if entry.is_dir { "[dir] " } else { "      " };
-                println!(
-                    "  {}{}  {} ({})",
-                    marker,
-                    entry.name,
-                    entry.total_size(),
-                    human_size(entry.total_size())
-                );
-            }
+            let output = match format.into() {
+                OutputFormat::Table => {
+                    let sk = sort.map(SortKey::from);
+                    let sd = sort_dir.map(SortDir::from);
+                    format::table::format(&result, sk, sd)
+                }
+                OutputFormat::Json => format::json::format(&result),
+                OutputFormat::Jsonl => format::jsonl::format(&result),
+                OutputFormat::Tree => format::tree::format(&result),
+            };
+            print!("{output}");
         }
-        Err(e) => {
-            eprintln!("error: {}", e);
-            process::exit(1);
+
+        Commands::Summary { path } => {
+            let scanner = Scanner::new(ScanOptions::default());
+            let result = match scanner.scan(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            };
+
+            println!(
+                "Path:        {}",
+                path.canonicalize()
+                    .unwrap_or(path)
+                    .display()
+            );
+            println!("Total size:  {} bytes", result.total_size);
+            println!("Entries:     {}", result.entry_count);
+        }
+
+        Commands::Completions { shell } => {
+            let mut cmd = <Cli as clap::CommandFactory>::command();
+            generate(shell, &mut cmd, "diskscope", &mut std::io::stdout());
         }
     }
-}
-
-fn run_completions(shell: Shell) {
-    let mut cmd = Cli::command();
-    let bin_name = cmd.get_name().to_string();
-    generate(shell, &mut cmd, &bin_name, &mut std::io::stdout());
-}
-
-fn human_size(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    for unit in UNITS {
-        if size < 1024.0 {
-            return format!("{:.1} {}", size, unit);
-        }
-        size /= 1024.0;
-    }
-    format!("{:.1} PB", size)
 }

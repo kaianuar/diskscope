@@ -170,7 +170,6 @@ dependencies = [
  "clap",
  "clap_complete",
  "scan-engine",
- "serde_json",
 ]
 
 [[package]]
@@ -395,6 +394,7 @@ dependencies = [
  "ignore",
  "rayon",
  "redb",
+ "serde_json",
  "tempfile",
 ]
 

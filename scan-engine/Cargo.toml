@@ -4,8 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "scan_engine"
+path = "src/lib.rs"
+
 [dependencies]
 ignore = "0.4"
 rayon = "1.10"
 redb = "2.1"
 tempfile = "3"
+serde_json = "1"
+
+[dev-dependencies]
+serde_json = "1"

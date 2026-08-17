@@ -1,19 +1,14 @@
-/// Scanner configuration options.
-pub mod options;
-/// Parallel directory walker.
-pub mod walker;
-/// Persistent file metadata cache.
 pub mod cache;
-/// Incremental scanner with cache.
 pub mod incremental;
+pub mod walker;
 
 use std::path::Path;
 
-use crate::domain::error::ScanError;
-use crate::domain::tree::FileTree;
-use crate::domain::opts::ScanOpts;
-use options::ScanOptions;
-use walker::walk_directory;
+use crate::tree::TreeBuilder;
+use crate::{ScanError, ScanOptions, ScanResult};
+
+pub use cache::RedbCache;
+pub use incremental::IncrementalScanner;
 
 /// Parallel directory scanner.
 pub struct Scanner {
@@ -21,14 +16,13 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    /// Create a new scanner with the given options.
     pub fn new(options: ScanOptions) -> Self {
         Self { options }
     }
 
-    /// Scan a directory and return a FileTree.
-    pub fn scan(&self, root: &Path, opts: &ScanOpts) -> Result<FileTree, ScanError> {
-        let file_node = walk_directory(root, &self.options, opts)?;
-        Ok(FileTree::new(file_node))
+    /// Scan a directory and return a `ScanResult`.
+    pub fn scan(&self, root: &Path) -> Result<ScanResult, ScanError> {
+        let entries = walker::walk_directory(root, &self.options)?;
+        Ok(TreeBuilder::build(entries))
     }
 }

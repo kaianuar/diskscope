@@ -1,476 +1,536 @@
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
 
+use scan_engine::filter::Filter;
+use scan_engine::format;
+use scan_engine::tree::TreeBuilder;
 use scan_engine::{
-    DomainError, FileNode, Filter, OutputFormat, SortKey,
+    FileEntry, FilterSpec, NodeType, ScanError, ScanResult, SortDir, SortKey, TrashError,
+    TreeNode,
 };
 
-// ---------- helpers ----------
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-fn make_node(name: &str, size: u64) -> FileNode {
-    FileNode::new(
-        PathBuf::from(format!("/tmp/{}", name)),
-        name.to_string(),
+fn file(path: &str, size: u64) -> FileEntry {
+    FileEntry {
+        path: PathBuf::from(path),
+        name: PathBuf::from(path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
         size,
-        1_700_000_000, // arbitrary fixed mtime
-        false,
-    )
-    .unwrap()
-}
-
-fn make_dir(name: &str, children: Vec<FileNode>) -> FileNode {
-    let mut node = FileNode::new(
-        PathBuf::from(format!("/tmp/{}", name)),
-        name.to_string(),
-        0,
-        1_700_000_000,
-        true,
-    )
-    .unwrap();
-    node.children = children;
-    node
-}
-
-fn recent_mtime() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        - 60 // 1 minute ago — always within any MaxAge ≥ 1 min
-}
-
-fn old_mtime() -> u64 {
-    1_000_000_000 // ~2001
-}
-
-// ====================================================================
-// Test 1: should create FileNode with valid path and size
-// ====================================================================
-#[test]
-fn should_create_filenode_with_valid_path_and_size() {
-    let node = FileNode::new(
-        PathBuf::from("/home/user/docs/readme.txt"),
-        "readme.txt".into(),
-        4096,
-        1_700_000_000,
-        false,
-    )
-    .unwrap();
-
-    assert_eq!(node.name, "readme.txt");
-    assert_eq!(node.size, 4096);
-    assert_eq!(node.path, PathBuf::from("/home/user/docs/readme.txt"));
-    assert!(!node.is_dir);
-    assert!(node.children.is_empty());
-}
-
-// ====================================================================
-// Test 2: should reject FileNode with empty path
-// ====================================================================
-#[test]
-fn should_reject_filenode_with_empty_path() {
-    let result = FileNode::new(PathBuf::new(), "".into(), 0, 0, false);
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), DomainError::InvalidPath("path is empty".into()));
-}
-
-// ====================================================================
-// Test 3: should compute total_size recursively
-// ====================================================================
-#[test]
-fn should_compute_total_size_recursively() {
-    let child_a = make_node("a.txt", 100);
-    let child_b = make_node("b.txt", 200);
-    let child_c = make_node("c.txt", 300);
-    let sub_dir = make_dir("sub", vec![child_c]);
-    let root = make_dir("root", vec![child_a, child_b, sub_dir]);
-
-    assert_eq!(root.total_size(), 600); // 100 + 200 + 300
-}
-
-// ====================================================================
-// Test 4: Filter::MinSize
-// ====================================================================
-#[test]
-fn should_filter_by_min_size() {
-    let small = make_node("small.txt", 100);
-    let big = make_node("big.txt", 5000);
-    let root = make_dir("root", vec![small, big]);
-
-    let filtered = root.filter(&[Filter::MinSize(500)], None).unwrap();
-    assert_eq!(filtered.children.len(), 1);
-    assert_eq!(filtered.children[0].name, "big.txt");
-}
-
-// ====================================================================
-// Test 5: Filter::Extension
-// ====================================================================
-#[test]
-fn should_filter_by_extension() {
-    let rs = make_node("main.rs", 200);
-    let txt = make_node("readme.txt", 300);
-    let rs2 = make_node("lib.RS", 150); // case-insensitive
-    let root = make_dir("root", vec![rs, txt, rs2]);
-
-    let filtered = root.filter(&[Filter::Extension("rs".into())], None).unwrap();
-    assert_eq!(filtered.children.len(), 2);
-    let names: Vec<&str> = filtered.children.iter().map(|c| c.name.as_str()).collect();
-    assert!(names.contains(&"main.rs"));
-    assert!(names.contains(&"lib.RS"));
-}
-
-// ====================================================================
-// Test 6: Filter::MaxAge
-// ====================================================================
-#[test]
-fn should_filter_by_max_age() {
-    let recent = {
-        let mut n = make_node("recent.log", 500);
-        n.mtime = recent_mtime();
-        n
-    };
-    let old = {
-        let mut n = make_node("archive.tar", 800);
-        n.mtime = old_mtime();
-        n
-    };
-    let root = make_dir("root", vec![recent, old]);
-
-    let max_age = Duration::from_secs(300); // 5 minutes
-    let filtered = root.filter(&[Filter::MaxAge(max_age)], None).unwrap();
-    assert_eq!(filtered.children.len(), 1);
-    assert_eq!(filtered.children[0].name, "recent.log");
-}
-
-// ====================================================================
-// Test 7: Filter::NamePattern
-// ====================================================================
-#[test]
-fn should_filter_by_name_pattern() {
-    let test1 = make_node("test_main.rs", 100);
-    let test2 = make_node("test_lib.rs", 200);
-    let src = make_node("main.rs", 300);
-    let root = make_dir("root", vec![test1, test2, src]);
-
-    let filtered = root.filter(&[Filter::NamePattern("test_*".into())], None).unwrap();
-    assert_eq!(filtered.children.len(), 2);
-    for child in &filtered.children {
-        assert!(child.name.starts_with("test_"));
+        modified: 1_700_000_000,
+        node_type: NodeType::File,
+        depth: path.matches('/').count() as u32,
     }
 }
 
-// ====================================================================
-// Test 8: SortKey::SizeDesc
-// ====================================================================
+fn dir(path: &str) -> FileEntry {
+    FileEntry {
+        path: PathBuf::from(path),
+        name: PathBuf::from(path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        size: 0,
+        modified: 1_700_000_000,
+        node_type: NodeType::Dir,
+        depth: path.matches('/').count() as u32,
+    }
+}
+
+fn make_result() -> ScanResult {
+    TreeBuilder::build(vec![
+        dir("/root"),
+        file("/root/a.txt", 50),
+        file("/root/b.rs", 200),
+        file("/root/c.txt", 10),
+        dir("/root/sub"),
+        file("/root/sub/d.rs", 500),
+        file("/root/sub/e.txt", 30),
+    ])
+}
+
+// ── Test 1: should create FileEntry with valid path and size ───────────────
+
+#[test]
+fn should_create_file_entry_with_valid_path_and_size() {
+    let entry = FileEntry {
+        path: PathBuf::from("/home/user/docs/readme.txt"),
+        name: "readme.txt".into(),
+        size: 4096,
+        modified: 1_700_000_000,
+        node_type: NodeType::File,
+        depth: 4,
+    };
+    assert_eq!(entry.name, "readme.txt");
+    assert_eq!(entry.size, 4096);
+    assert_eq!(entry.path, PathBuf::from("/home/user/docs/readme.txt"));
+    assert_eq!(entry.node_type, NodeType::File);
+}
+
+// ── Test 2: should build tree with correct parent-child nesting ────────────
+
+#[test]
+fn should_build_tree_with_correct_parent_child_nesting() {
+    let entries = vec![
+        dir("/root"),
+        dir("/root/sub"),
+        file("/root/a.txt", 100),
+        file("/root/sub/b.txt", 200),
+    ];
+    let result = TreeBuilder::build(entries);
+
+    assert_eq!(result.root.entry.path, PathBuf::from("/root"));
+    assert_eq!(result.root.children.len(), 2); // sub/ and a.txt
+
+    let sub = result
+        .root
+        .children
+        .iter()
+        .find(|c| c.entry.node_type == NodeType::Dir)
+        .expect("sub dir");
+    assert_eq!(sub.children.len(), 1);
+    assert_eq!(sub.children[0].entry.name, "b.txt");
+}
+
+// ── Test 3: should compute total_size recursively ──────────────────────────
+
+#[test]
+fn should_compute_total_size_recursively() {
+    let entries = vec![
+        dir("/root"),
+        dir("/root/sub"),
+        file("/root/a.txt", 50),
+        file("/root/sub/b.txt", 30),
+        file("/root/sub/c.txt", 70),
+    ];
+    let result = TreeBuilder::build(entries);
+    assert_eq!(result.total_size, 150);
+    assert_eq!(result.entry_count, 5);
+}
+
+// ── Test 4: Filter::apply with min_size ────────────────────────────────────
+
+#[test]
+fn should_filter_by_min_size() {
+    let result = make_result();
+    let spec = FilterSpec {
+        min_size: Some(100),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+    assert_eq!(filtered.total_size, 700); // 200 + 500
+}
+
+// ── Test 5: Filter::apply with file types ──────────────────────────────────
+
+#[test]
+fn should_filter_by_file_type() {
+    let result = make_result();
+    let spec = FilterSpec {
+        types: vec!["rs".to_string()],
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+
+    let names = collect_file_names(&filtered.root);
+    assert!(names.contains(&"b.rs".to_string()));
+    assert!(names.contains(&"d.rs".to_string()));
+    assert!(!names.contains(&"a.txt".to_string()));
+}
+
+// ── Test 6: Filter::apply with name pattern ────────────────────────────────
+
+#[test]
+fn should_filter_by_name_pattern() {
+    let result = make_result();
+    let spec = FilterSpec {
+        pattern: Some("b".to_string()),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+
+    let names = collect_file_names(&filtered.root);
+    assert!(names.contains(&"b.rs".to_string()));
+    assert!(!names.contains(&"a.txt".to_string()));
+}
+
+// ── Test 7: Filter::apply with max_age_days ────────────────────────────────
+
+#[test]
+fn should_filter_by_max_age() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let recent = now - 86_400; // 1 day ago
+    let old = 946_684_800; // 2000-01-01
+
+    let entries = vec![
+        dir("/root"),
+        FileEntry {
+            path: PathBuf::from("/root/old.txt"),
+            name: "old.txt".into(),
+            size: 100,
+            modified: old,
+            node_type: NodeType::File,
+            depth: 1,
+        },
+        FileEntry {
+            path: PathBuf::from("/root/new.txt"),
+            name: "new.txt".into(),
+            size: 100,
+            modified: recent,
+            node_type: NodeType::File,
+            depth: 1,
+        },
+    ];
+    let result = TreeBuilder::build(entries);
+
+    let spec = FilterSpec {
+        max_age_days: Some(30),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+
+    let names = collect_file_names(&filtered.root);
+    assert!(names.contains(&"new.txt".to_string()));
+    assert!(!names.contains(&"old.txt".to_string()));
+}
+
+// ── Test 8: compose multiple filters ───────────────────────────────────────
+
+#[test]
+fn should_compose_multiple_filters() {
+    let result = make_result();
+    let spec = FilterSpec {
+        min_size: Some(20),
+        types: vec!["txt".to_string()],
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+
+    let names = collect_file_names(&filtered.root);
+    // a.txt (50, txt, >=20) → kept
+    // c.txt (10, txt, <20) → filtered
+    // e.txt (30, txt, >=20) → kept
+    // b.rs (200, rs, not txt) → filtered
+    // d.rs (500, rs, not txt) → filtered
+    assert!(names.contains(&"a.txt".to_string()));
+    assert!(names.contains(&"e.txt".to_string()));
+    assert!(!names.contains(&"c.txt".to_string()));
+    assert!(!names.contains(&"b.rs".to_string()));
+}
+
+// ── Test 9: should sort children by size descending ────────────────────────
+
 #[test]
 fn should_sort_children_by_size_descending() {
-    let small = make_node("a.txt", 100);
-    let big = make_node("b.txt", 900);
-    let mid = make_node("c.txt", 500);
-    let root = make_dir("root", vec![small, big, mid]);
+    let entries = vec![
+        dir("/root"),
+        file("/root/small.txt", 10),
+        file("/root/big.txt", 500),
+        file("/root/medium.txt", 100),
+    ];
+    let result = TreeBuilder::build(entries);
 
-    let sorted = root.sort(SortKey::SizeDesc);
-    let sizes: Vec<u64> = sorted.children.iter().map(|c| c.total_size()).collect();
-    assert_eq!(sizes, vec![900, 500, 100]);
+    assert_eq!(result.root.children[0].entry.name, "big.txt");
+    assert_eq!(result.root.children[1].entry.name, "medium.txt");
+    assert_eq!(result.root.children[2].entry.name, "small.txt");
 }
 
-// ====================================================================
-// Test 9: SortKey::NameAsc
-// ====================================================================
-#[test]
-fn should_sort_children_by_name_ascending() {
-    let z = make_node("zebra.txt", 10);
-    let a = make_node("alpha.txt", 20);
-    let m = make_node("mu.txt", 30);
-    let root = make_dir("root", vec![z, a, m]);
+// ── Test 10: OutputFormat::Json ────────────────────────────────────────────
 
-    let sorted = root.sort(SortKey::NameAsc);
-    let names: Vec<&str> = sorted.children.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, vec!["alpha.txt", "mu.txt", "zebra.txt"]);
-}
-
-// ====================================================================
-// Test 10: OutputFormat::Json
-// ====================================================================
 #[test]
 fn should_format_as_json() {
-    let child = make_node("a.txt", 100);
-    let root = make_dir("src", vec![child]);
-    let json = root.format(OutputFormat::Json).unwrap();
+    let result = TreeBuilder::build(vec![
+        dir("/root"),
+        file("/root/hello.txt", 512),
+    ]);
+    let output = format::json::format(&result);
 
-    assert!(json.contains("\"name\":\"src\""));
-    assert!(json.contains("\"is_dir\":true"));
-    assert!(json.contains("\"name\":\"a.txt\""));
-    assert!(json.contains("\"size\":100"));
-    assert!(json.contains("\"total_size\":100"));
-    assert!(json.contains("\"children\":["));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&output).expect("output must be valid JSON");
+    assert_eq!(parsed["total_size"], 512);
+    assert_eq!(parsed["entry_count"], 2);
+    assert_eq!(parsed["root"]["name"], "root");
+    assert_eq!(parsed["root"]["type"], "dir");
+    assert_eq!(parsed["root"]["children"][0]["name"], "hello.txt");
+    assert_eq!(parsed["root"]["children"][0]["size"], 512);
 }
 
-// ====================================================================
-// Test 11: OutputFormat::Table
-// ====================================================================
+// ── Test 11: OutputFormat::Table ───────────────────────────────────────────
+
 #[test]
 fn should_format_as_table() {
-    let child_a = make_node("alpha.txt", 1024);
-    let child_b = make_node("beta.txt", 2_097_152); // 2 MB
-    let root = make_dir("root", vec![child_a, child_b]);
-    let table = root.format(OutputFormat::Table).unwrap();
+    let result = make_result();
+    let output = format::table::format(&result, None, None);
 
-    let lines: Vec<&str> = table.trim().lines().collect();
-    assert_eq!(lines[0], "Name\tSize\tModified\tType");
-    assert!(lines[1].contains("alpha.txt"));
-    assert!(lines[1].contains("1.0 KB"));
-    assert!(lines[2].contains("beta.txt"));
-    assert!(lines[2].contains("2.0 MB"));
+    assert!(output.contains("Name"), "header missing Name");
+    assert!(output.contains("Size"), "header missing Size");
+    assert!(output.contains("Modified"), "header missing Modified");
+    assert!(output.contains("Type"), "header missing Type");
 }
 
-// ====================================================================
-// Test 12: DomainError Display
-// ====================================================================
-#[test]
-fn should_display_domain_error_variants_correctly() {
-    let cases: Vec<(DomainError, &str)> = vec![
-        (DomainError::InvalidPath("empty".into()), "invalid path: empty"),
-        (DomainError::ScanFailed("denied".into()), "scan failed: denied"),
-        (DomainError::CacheFailed("corrupt".into()), "cache failed: corrupt"),
-        (DomainError::TrashFailed("unavail".into()), "trash failed: unavail"),
-        (DomainError::FilterFailed("bad pat".into()), "filter failed: bad pat"),
-    ];
+// ── Test 12: OutputFormat::Jsonl ───────────────────────────────────────────
 
+#[test]
+fn should_format_as_jsonl() {
+    let result = TreeBuilder::build(vec![
+        dir("/root"),
+        file("/root/a.txt", 100),
+        file("/root/b.rs", 256),
+    ]);
+    let output = format::jsonl::format(&result);
+    let lines: Vec<&str> = output.trim().lines().collect();
+
+    // First line = summary, then one line per node (root + 2 files = 3 entries).
+    assert_eq!(lines.len(), 4, "expected 4 lines: summary + 3 entries");
+
+    for (i, line) in lines.iter().enumerate() {
+        let _: serde_json::Value =
+            serde_json::from_str(line).expect(&format!("line {i} must be valid JSON"));
+    }
+
+    let summary: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(summary["total_size"], 356);
+    assert_eq!(summary["entry_count"], 3);
+}
+
+// ── Test 13: OutputFormat::Tree ────────────────────────────────────────────
+
+#[test]
+fn should_format_as_tree() {
+    let result = TreeBuilder::build(vec![
+        dir("/root"),
+        dir("/root/sub"),
+        file("/root/sub/data.rs", 300),
+        file("/root/README.md", 150),
+    ]);
+    let output = format::tree::format(&result);
+
+    assert!(output.starts_with("root/"), "should start with root/");
+    assert!(output.contains("[450 B]"), "total_size should be 450");
+    assert!(output.contains("├──"), "should contain branch connector");
+    assert!(output.contains("└──"), "should contain last-child connector");
+    assert!(output.contains("│"), "should contain vertical connector");
+    assert!(output.contains("data.rs"), "should contain nested file");
+    assert!(output.contains("README.md"), "should contain sibling file");
+}
+
+// ── Test 14: ScanError Display ─────────────────────────────────────────────
+
+#[test]
+fn should_display_scan_error_variants_correctly() {
+    let cases: Vec<(ScanError, &str)> = vec![
+        (
+            ScanError::IoError("disk full".into()),
+            "scan I/O error: disk full",
+        ),
+        (
+            ScanError::PermissionDenied("/secret".into()),
+            "permission denied: /secret",
+        ),
+        (
+            ScanError::InvalidPath("empty".into()),
+            "invalid path: empty",
+        ),
+    ];
     for (err, expected) in cases {
-        assert_eq!(format!("{}", err), expected);
-        // Also verify std::error::Error is implemented
+        assert_eq!(format!("{err}"), expected);
         let _: &dyn std::error::Error = &err;
     }
 }
 
-// ====================================================================
-// Test 13: compose multiple filters
-// ====================================================================
-#[test]
-fn should_compose_multiple_filters() {
-    let a = {
-        let mut n = make_node("big.rs", 5000);
-        n.mtime = recent_mtime();
-        n
-    };
-    let b = make_node("small.rs", 100); // too small
-    let c = {
-        let mut n = make_node("big.txt", 8000);
-        n.mtime = recent_mtime();
-        n
-    };
-    let d = {
-        let mut n = make_node("old.rs", 6000);
-        n.mtime = old_mtime();
-        n
-    };
-    let root = make_dir("root", vec![a, b, c, d]);
+// ── Test 15: TrashError Display ────────────────────────────────────────────
 
-    let filters = vec![
-        Filter::MinSize(1000),
-        Filter::Extension("rs".into()),
-        Filter::MaxAge(Duration::from_secs(300)),
+#[test]
+fn should_display_trash_error_variants_correctly() {
+    let cases: Vec<(TrashError, &str)> = vec![
+        (
+            TrashError::IoError("disk full".into()),
+            "trash I/O error: disk full",
+        ),
+        (
+            TrashError::FileNotFound("/gone".into()),
+            "file not found: /gone",
+        ),
+        (
+            TrashError::UndoFailed("no ticket".into()),
+            "undo failed: no ticket",
+        ),
     ];
-    let filtered = root.filter(&filters, None).unwrap();
-
-    // Only "big.rs" satisfies all three: size >= 1000, ext == "rs", age <= 5 min
-    assert_eq!(filtered.children.len(), 1);
-    assert_eq!(filtered.children[0].name, "big.rs");
+    for (err, expected) in cases {
+        assert_eq!(format!("{err}"), expected);
+        let _: &dyn std::error::Error = &err;
+    }
 }
 
-// ====================================================================
-// Test 14: respect max_depth
-// ====================================================================
-#[test]
-fn should_respect_max_depth() {
-    let leaf = make_node("deep.txt", 42);
-    let level2 = make_dir("level2", vec![leaf]);
-    let level1 = make_dir("level1", vec![level2]);
-    let root = make_dir("root", vec![level1]);
+// ── Test 16: should calculate total_size and entry_count with mixed types ──
 
-    // depth=1 should keep root and level1 children, but prune level2's children
-    let filtered = root.filter(&[], Some(1)).unwrap();
-    assert_eq!(filtered.name, "root");
-    assert_eq!(filtered.children.len(), 1); // level1
-    assert_eq!(filtered.children[0].name, "level1");
-    assert!(filtered.children[0].children.is_empty()); // pruned at depth limit
-
-    // depth=0 should prune root's children entirely
-    let filtered0 = root.filter(&[], Some(0)).unwrap();
-    assert!(filtered0.children.is_empty());
-}
-
-// ====================================================================
-// Phase 1: Domain Core — 10 plan-specified tests
-// ====================================================================
-
-use scan_engine::{FileType, Size, FileTree};
-
-// Test 4 (plan): should format Size as human-readable string when bytes > 1024
-#[test]
-fn should_format_size_as_human_readable() {
-    assert_eq!(Size::new(500).to_string(), "500.0 B");
-    assert_eq!(Size::new(1024).to_string(), "1.0 KB");
-    assert_eq!(Size::new(1048576).to_string(), "1.0 MB");
-    assert_eq!(Size::new(1073741824).to_string(), "1.0 GB");
-}
-
-// Test 5 (plan): should classify file type by extension when extension is known
-#[test]
-fn should_classify_file_type_by_extension() {
-    assert_eq!(FileType::from_extension("mp3"), FileType::Audio);
-    assert_eq!(FileType::from_extension("mp4"), FileType::Video);
-    assert_eq!(FileType::from_extension("png"), FileType::Image);
-    assert_eq!(FileType::from_extension("pdf"), FileType::Document);
-    assert_eq!(FileType::from_extension("rs"), FileType::Code);
-    assert_eq!(FileType::from_extension("zip"), FileType::Archive);
-}
-
-// Test 6 (plan): should return Other when extension is unknown
-#[test]
-fn should_return_other_for_unknown_extension() {
-    assert_eq!(FileType::from_extension("xyz"), FileType::Other);
-    assert_eq!(FileType::from_extension(""), FileType::Other);
-    assert_eq!(FileType::from_filename("noext"), FileType::Other);
-}
-
-// Test 2 (plan): should calculate total_size when building FileTree from children
 #[test]
 fn should_calculate_total_size_in_file_tree() {
-    let a = make_node("a.txt", 100);
-    let b = make_node("b.txt", 200);
-    let root = make_dir("root", vec![a, b]);
-    let tree = FileTree::new(root);
-    assert_eq!(tree.total_size(), 300);
+    let entries = vec![
+        dir("/root"),
+        file("/root/a.txt", 100),
+        file("/root/b.txt", 200),
+    ];
+    let result = TreeBuilder::build(entries);
+    assert_eq!(result.total_size, 300);
+    assert_eq!(result.entry_count, 3);
 }
 
-// Test 3 (plan): should count files recursively when tree has nested children
+// ── Test 17: should count files recursively when tree has nested children ──
+
 #[test]
 fn should_count_files_recursively_in_tree() {
-    let a = make_node("a.txt", 10);
-    let b = make_node("b.txt", 20);
-    let sub = make_dir("sub", vec![make_node("c.txt", 30)]);
-    let root = make_dir("root", vec![a, b, sub]);
-    let tree = FileTree::new(root);
-    assert_eq!(tree.file_count(), 3);
+    let entries = vec![
+        dir("/root"),
+        file("/root/a.txt", 10),
+        file("/root/b.txt", 20),
+        dir("/root/sub"),
+        file("/root/sub/c.txt", 30),
+    ];
+    let result = TreeBuilder::build(entries);
+    assert_eq!(result.entry_count, 5);
 }
 
-// Test 7 (plan): should match file when size within range filter
+// ── Test 18: should match file when size within range filter ───────────────
+
 #[test]
 fn should_match_file_when_size_within_range() {
-    let node = make_node("mid.txt", 500);
-    let root = make_dir("root", vec![node]);
-    let filtered = root.filter(&[Filter::MinSize(100), Filter::MaxSize(1000)], None).unwrap();
-    assert_eq!(filtered.children.len(), 1);
-    assert_eq!(filtered.children[0].name, "mid.txt");
+    let result = TreeBuilder::build(vec![
+        dir("/root"),
+        file("/root/mid.txt", 500),
+    ]);
+    let spec = FilterSpec {
+        min_size: Some(100),
+        max_size: Some(1000),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+    let names = collect_file_names(&filtered.root);
+    assert!(names.contains(&"mid.txt".to_string()));
 }
 
-// Test 8 (plan): should reject file when size outside range filter
+// ── Test 19: should reject file when size outside range filter ─────────────
+
 #[test]
 fn should_reject_file_when_size_outside_range() {
-    let small = make_node("tiny.txt", 50);
-    let big = make_node("huge.txt", 99999);
-    let root = make_dir("root", vec![small, big]);
-    let filtered = root.filter(&[Filter::MinSize(100), Filter::MaxSize(1000)], None);
-    // Both files fail: 50 < 100 and 99999 > 1000, so the entire tree is pruned
-    assert!(filtered.is_none());
+    let result = TreeBuilder::build(vec![
+        dir("/root"),
+        file("/root/tiny.txt", 50),
+        file("/root/huge.txt", 99999),
+    ]);
+    let spec = FilterSpec {
+        min_size: Some(100),
+        max_size: Some(1000),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+    let names = collect_file_names(&filtered.root);
+    assert!(!names.contains(&"tiny.txt".to_string()));
+    assert!(!names.contains(&"huge.txt".to_string()));
 }
 
-// Test 9 (plan): should match file when name matches glob pattern
-#[test]
-fn should_match_file_when_name_matches_glob() {
-    let a = make_node("test_main.rs", 100);
-    let b = make_node("src.rs", 200);
-    let c = make_node("test_lib.rs", 300);
-    let root = make_dir("root", vec![a, b, c]);
-    let filtered = root.filter(&[Filter::NamePattern("test_*".into())], None).unwrap();
-    assert_eq!(filtered.children.len(), 2);
-    for child in &filtered.children {
-        assert!(child.name.starts_with("test_"));
-    }
-}
+// ── Test 20: should combine multiple filters with AND logic ────────────────
 
-// Test 10 (plan): should combine multiple filters with AND logic
 #[test]
 fn should_combine_multiple_filters_with_and_logic() {
-    let big_rs = {
-        let mut n = make_node("large.rs", 5000);
-        n.mtime = recent_mtime();
-        n
-    };
-    let small_rs = make_node("small.rs", 100); // fails MinSize
-    let big_txt = {
-        let mut n = make_node("large.txt", 5000);
-        n.mtime = recent_mtime();
-        n
-    };
-    let old_rs = {
-        let mut n = make_node("old.rs", 5000);
-        n.mtime = old_mtime();
-        n
-    };
-    let root = make_dir("root", vec![big_rs, small_rs, big_txt, old_rs]);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
 
-    let filters = vec![
-        Filter::MinSize(1000),
-        Filter::Extension("rs".into()),
-        Filter::MaxAge(Duration::from_secs(300)),
+    let entries = vec![
+        dir("/root"),
+        FileEntry {
+            path: PathBuf::from("/root/large.rs"),
+            name: "large.rs".into(),
+            size: 5000,
+            modified: now - 60,
+            node_type: NodeType::File,
+            depth: 1,
+        },
+        file("/root/small.rs", 100),
+        FileEntry {
+            path: PathBuf::from("/root/large.txt"),
+            name: "large.txt".into(),
+            size: 5000,
+            modified: now - 60,
+            node_type: NodeType::File,
+            depth: 1,
+        },
+        FileEntry {
+            path: PathBuf::from("/root/old.rs"),
+            name: "old.rs".into(),
+            size: 5000,
+            modified: 946_684_800,
+            node_type: NodeType::File,
+            depth: 1,
+        },
     ];
-    let filtered = root.filter(&filters, None).unwrap();
+    let result = TreeBuilder::build(entries);
 
-    // Only "large.rs" passes all three: size >= 1000, ext == "rs", recent
-    assert_eq!(filtered.children.len(), 1);
-    assert_eq!(filtered.children[0].name, "large.rs");
+    let spec = FilterSpec {
+        min_size: Some(1000),
+        types: vec!["rs".to_string()],
+        max_age_days: Some(300),
+        ..Default::default()
+    };
+    let filtered = Filter::apply(result, &spec);
+
+    let names = collect_file_names(&filtered.root);
+    assert!(names.contains(&"large.rs".to_string()));
+    assert!(!names.contains(&"small.rs".to_string()));
+    assert!(!names.contains(&"large.txt".to_string()));
+    assert!(!names.contains(&"old.rs".to_string()));
 }
 
-// ====================================================================
-// Test (plan): should format as JSONL when OutputFormat::Jsonl
-// ====================================================================
-#[test]
-fn should_format_as_jsonl() {
-    let child_a = make_node("a.txt", 100);
-    let child_b = make_node("b.txt", 200);
-    let root = make_dir("src", vec![child_a, child_b]);
-    let jsonl = root.format(OutputFormat::Jsonl).unwrap();
+// ── Test 21: table sort by size desc ───────────────────────────────────────
 
-    let lines: Vec<&str> = jsonl.lines().collect();
-    // One JSON object per node (root + 2 children = 3 lines)
-    assert_eq!(lines.len(), 3);
-    assert!(lines[0].contains("\"name\":\"src\""));
-    assert!(lines[0].contains("\"is_dir\":true"));
-    assert!(lines[1].contains("\"name\":\"a.txt\""));
-    assert!(lines[1].contains("\"size\":100"));
-    assert!(lines[2].contains("\"name\":\"b.txt\""));
-    assert!(lines[2].contains("\"size\":200"));
-    // Each line must be valid JSON-ish (starts with '{', ends with '}')
-    for line in &lines {
-        assert!(line.starts_with('{'), "line should start with '{{': {}", line);
-        assert!(line.ends_with('}'), "line should end with '}}': {}", line);
+#[test]
+fn table_sort_by_size_desc() {
+    let result = make_result();
+    let output = format::table::format(&result, Some(SortKey::Size), Some(SortDir::Desc));
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert!(lines.len() >= 3);
+    let main_pos = lines.iter().position(|l| l.contains("d.rs")).unwrap();
+    let readme_pos = lines.iter().position(|l| l.contains("b.rs")).unwrap();
+    assert!(
+        main_pos < readme_pos,
+        "d.rs (500) should come before b.rs (200)"
+    );
+}
+
+// ── Test 22: table sort by name ascending ──────────────────────────────────
+
+#[test]
+fn table_sort_by_name_asc() {
+    let result = make_result();
+    let output = format::table::format(&result, Some(SortKey::Name), Some(SortDir::Asc));
+    let lines: Vec<&str> = output.lines().collect();
+
+    let a_pos = lines.iter().position(|l| l.contains("a.txt")).unwrap();
+    let b_pos = lines.iter().position(|l| l.contains("b.rs")).unwrap();
+    assert!(
+        a_pos < b_pos,
+        "a.txt should come before b.rs alphabetically"
+    );
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+fn collect_file_names(node: &TreeNode) -> Vec<String> {
+    let mut names = Vec::new();
+    for child in &node.children {
+        if child.entry.node_type == NodeType::File {
+            names.push(child.entry.name.clone());
+        }
+        names.extend(collect_file_names(child));
     }
-}
-
-// ====================================================================
-// Test (plan): should format as tree when OutputFormat::Tree
-// ====================================================================
-#[test]
-fn should_format_as_tree() {
-    let child_a = make_node("alpha.txt", 1024);
-    let child_b = make_node("beta.txt", 2_097_152);
-    let sub = make_dir("sub", vec![make_node("deep.txt", 512)]);
-    let root = make_dir("root", vec![child_a, child_b, sub]);
-    let tree = root.format(OutputFormat::Tree).unwrap();
-
-    // Root appears on first line with its total size
-    let lines: Vec<&str> = tree.lines().collect();
-    assert!(lines[0].starts_with("root"));
-    assert!(lines[0].contains("KB") || lines[0].contains("MB") || lines[0].contains("B"));
-
-    // Children are indented
-    assert!(lines.iter().any(|l| l.contains("alpha.txt")));
-    assert!(lines.iter().any(|l| l.contains("beta.txt")));
-
-    // Subdirectory and its child are further indented
-    let deep_line = lines.iter().find(|l| l.contains("deep.txt")).unwrap();
-    assert!(deep_line.starts_with("    ")); // 2 levels deep = 4 spaces
+    names
 }
