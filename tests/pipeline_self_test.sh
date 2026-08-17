@@ -89,11 +89,11 @@ extract_deliverables() {
   local target_phase="$1"
   local in_phase=0 line
   while IFS= read -r line; do
-    if echo "$line" | grep -qiE "^##[[:space:]]+phase[[:space:]]+[0-9]+"; then
-      if echo "$line" | grep -qiE "^##[[:space:]]+${target_phase}"; then in_phase=1; else in_phase=0; fi
+    if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+"; then
+      if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+${target_phase}"; then in_phase=1; else in_phase=0; fi
       continue
     fi
-    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE "^##[[:space:]]"; then break; fi
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qiE "^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+"; then break; fi
     if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE "^- " && ! echo "$line" | grep -qE "^- \*\*Gate"; then
       echo "$line" | sed "s/^- //"
     fi

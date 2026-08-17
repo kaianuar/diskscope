@@ -215,18 +215,17 @@ extract_deliverables() {
   local target_phase="$1"
   local in_phase=0 line
   while IFS= read -r line; do
-    # Detect phase headings: ## Phase N: or ## Phase N —
-    if echo "$line" | grep -qiE '^##[[:space:]]+phase[[:space:]]+[0-9]+'; then
-      # Check if this is the target phase
-      if echo "$line" | grep -qiE "^##[[:space:]]+${target_phase}"; then
+    # Match ## or ### headings (Phase N or PhaseN)
+    if echo "$line" | grep -qiE '^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+'; then
+      if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+${target_phase}"; then
         in_phase=1
       else
         in_phase=0
       fi
       continue
     fi
-    # Stop at the next ## heading (different phase or section)
-    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE '^##[[:space:]]'; then
+    # Stop at the next ## or ### PHASE heading (different section), not sub-headings
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qiE '^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+'; then
       break
     fi
     # Extract deliverable lines (skip Gate/test-list lines which start with "- **Gate")
