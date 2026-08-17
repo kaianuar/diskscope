@@ -47,12 +47,37 @@ phases="$(grep -iE '^#+[[:space:]]+phase[[:space:]]+[0-9]+' "$WORK/plan.md" \
   | sed -E 's/^#+[[:space:]]*//I; s/[[:space:]]*:.*$//I; s/[[:space:]]+$//' \
   | tr '[:upper:]' '[:lower:]' \
   | sort -t' ' -k2 -n | sort -u -k1,1 -k2,2n \
-  | while read -r line; do n="$(echo "$line" | sed -E 's/^phase[[:space:]]+//')"; [ -n "$n" ] && echo "Phase$n"; done)"
+  | while read -r line; do n="$(echo "$line" | sed -E 's/^phase[[:space:]]+//; s/[^0-9].*$//')"; [ -n "$n" ] && echo "Phase$n"; done)"
 expected=$'Phase1\nPhase2\nPhase3\nPhase4\nPhase5\nPhase6'
 if [ "$phases" = "$expected" ]; then
   ok "extracts exactly 6 headings as Phase1..Phase6, ignores table rows"
 else
   no "extract_phases => got: [${phases//$'\n'/ }] want: [${expected//$'\n'/ }]"
+fi
+
+# Test 1b: builder's format (### Phase 0 — description with trailing text)
+cat > "$WORK/plan2.md" <<'EOF'
+### Phase 0 — Workspace Scaffold + Domain Core
+stuff here
+### Phase 1 — Scan Engine (Adapters)
+more stuff
+| dependency table with Phase 2 reference |
+### Phase 2 — CLI Adapter
+### Phase 3 — GUI Adapter (Tauri + egui)
+### Phase 4 — Cross-Platform Packaging + CI
+EOF
+cd "$WORK" && cp plan2.md plan.md
+p2="$(grep -iE '^#+[[:space:]]+phase[[:space:]]+[0-9]+' plan.md \
+  | sed -E 's/^#+[[:space:]]*//I; s/[[:space:]]*:.*$//I; s/[[:space:]]+$//' \
+  | tr '[:upper:]' '[:lower:]' \
+  | sort -t' ' -k2 -n | sort -u -k1,1 -k2,2n \
+  | while read -r line; do n="$(echo "$line" | sed -E 's/^phase[[:space:]]+//; s/[^0-9].*$//')"; [ -n "$n" ] && echo "Phase$n"; done)"
+cd "$DIR"
+exp2=$'Phase0\nPhase1\nPhase2\nPhase3\nPhase4'
+if [ "$p2" = "$exp2" ]; then
+  ok "builder format (### Phase N — desc): 5 phases, no trailing text in names"
+else
+  no "builder format => got: [${p2//$'\n'/ }] want: [${exp2//$'\n'/ }]"
 fi
 
 # =============================================================================

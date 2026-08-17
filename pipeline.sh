@@ -201,8 +201,9 @@ extract_phases() {
   fi
   # Rebuild as single-word tokens "PhaseN" (no space) so array indexing works
   # without word-splitting "Phase 1" into ["Phase","1"].
+  # Truncate after the number so full-line descriptions don't get split into extra phases.
   echo "$phases" | while read -r line; do
-    n=$(echo "$line" | sed -E 's/^phase[[:space:]]+//')
+    n=$(echo "$line" | sed -E 's/^phase[[:space:]]+//; s/[^0-9].*$//')
     [ -n "$n" ] && echo "Phase${n}"
   done
 }
