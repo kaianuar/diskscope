@@ -257,6 +257,7 @@ with open('/tmp/gate0_prompt.txt', 'r') as f:
     template = f.read()
 
 plan = open('${PLAN_FILE}', 'r').read()
+guidelines = open('${GUIDELINES_FILE}', 'r').read()[:20000]
 
 ponytail = ''
 rules_dir = '${PROJ_ROOT}/.agents/rules'
