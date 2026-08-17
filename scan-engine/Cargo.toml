@@ -1,0 +1,11 @@
+[package]
+name = "scan-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ignore = "0.4"
+rayon = "1.10"
+redb = "2.1"
+tempfile = "3"
