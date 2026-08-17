@@ -8,13 +8,17 @@ use super::TrashTicket;
 
 /// Port: walks the filesystem and returns a FileNode tree.
 pub trait Scanner {
+    /// Scan the directory at `root` with the given options.
     fn scan(&self, root: &Path, opts: &ScanOpts) -> Result<FileNode, ScanError>;
 }
 
 /// Port: persistent cache for incremental scans (mtime-based invalidation).
 pub trait Cache {
+    /// Look up a cached entry by path.
     fn get(&self, path: &Path) -> Result<Option<CachedEntry>, CacheError>;
+    /// Store a cached entry keyed by path.
     fn put(&self, path: &Path, entry: &CachedEntry) -> Result<(), CacheError>;
+    /// Remove a cached entry for the given path.
     fn invalidate(&self, path: &Path) -> Result<(), CacheError>;
 }
 

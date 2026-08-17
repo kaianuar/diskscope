@@ -12,10 +12,12 @@ use super::TrashTicket;
 
 /// Returns a pre-built FileNode tree. For testing scan callers.
 pub struct MockScanner {
+    /// The pre-built tree returned by `scan`.
     pub tree: FileNode,
 }
 
 impl MockScanner {
+    /// Create a new mock scanner that returns the given tree.
     pub fn new(tree: FileNode) -> Self {
         Self { tree }
     }
@@ -36,6 +38,7 @@ pub struct MockCache {
 }
 
 impl MockCache {
+    /// Create a new empty mock cache.
     pub fn new() -> Self {
         Self { entries: HashMap::new() }
     }
@@ -63,11 +66,19 @@ pub struct MockTrash {
     deleted: std::cell::RefCell<Vec<PathBuf>>,
 }
 
+impl Default for MockTrash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockTrash {
+    /// Create a new mock trash with no deleted files.
     pub fn new() -> Self {
         Self { deleted: std::cell::RefCell::new(Vec::new()) }
     }
 
+    /// Return the list of paths that have been deleted.
     pub fn deleted(&self) -> Vec<PathBuf> {
         self.deleted.borrow().clone()
     }

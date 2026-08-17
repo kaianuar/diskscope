@@ -6,13 +6,18 @@ use super::sort::SortKey;
 /// Options passed to a scan operation.
 #[derive(Debug, Clone, Default)]
 pub struct ScanOpts {
+    /// Filters to apply to scan results.
     pub filters: Vec<Filter>,
+    /// Sort order for children.
     pub sort: Option<SortKey>,
+    /// Maximum directory depth (None = unlimited).
     pub depth: Option<u32>,
+    /// Output format for rendering.
     pub format: OutputFormat,
 }
 
 impl ScanOpts {
+    /// Create a new default `ScanOpts`.
     pub fn new() -> Self {
         Self::default()
     }

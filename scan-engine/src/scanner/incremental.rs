@@ -18,6 +18,7 @@ pub struct IncrementalScanner {
 }
 
 impl IncrementalScanner {
+    /// Create a new incremental scanner with the given options and cache.
     pub fn new(options: ScanOptions, cache: RedbCache) -> Self {
         Self { options, cache }
     }

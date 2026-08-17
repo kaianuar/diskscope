@@ -1,6 +1,10 @@
+/// Scanner configuration options.
 pub mod options;
+/// Parallel directory walker.
 pub mod walker;
+/// Persistent file metadata cache.
 pub mod cache;
+/// Incremental scanner with cache.
 pub mod incremental;
 
 use std::path::Path;
@@ -17,6 +21,7 @@ pub struct Scanner {
 }
 
 impl Scanner {
+    /// Create a new scanner with the given options.
     pub fn new(options: ScanOptions) -> Self {
         Self { options }
     }

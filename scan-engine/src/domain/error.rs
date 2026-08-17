@@ -32,6 +32,7 @@ impl std::error::Error for DomainError {}
 /// Scan-specific error wrapping I/O failures.
 #[derive(Debug)]
 pub enum ScanError {
+    /// An I/O error occurred during scanning.
     Io(String),
 }
 
@@ -48,6 +49,7 @@ impl std::error::Error for ScanError {}
 /// Cache-specific error.
 #[derive(Debug)]
 pub enum CacheError {
+    /// An I/O error occurred during cache access.
     Io(String),
 }
 
@@ -64,6 +66,7 @@ impl std::error::Error for CacheError {}
 /// Trash-specific error.
 #[derive(Debug)]
 pub enum TrashError {
+    /// An I/O error occurred during a trash operation.
     Io(String),
 }
 

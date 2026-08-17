@@ -105,7 +105,7 @@ pub fn walk_directory(
             name,
             size: file_size,
             mtime,
-            is_dir: entry.file_type().map_or(false, |ft| ft.is_dir()),
+            is_dir: entry.file_type().is_some_and(|ft| ft.is_dir()),
             children,
         };
 

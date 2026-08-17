@@ -3,6 +3,7 @@ use super::filenode::FileNode;
 /// Wrapper around a root FileNode providing aggregate stats.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileTree {
+    /// The root node of the tree.
     pub root: FileNode,
 }
 

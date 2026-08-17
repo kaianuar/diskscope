@@ -3,8 +3,11 @@
 
 //! DiskScope scan engine — domain entities, port traits, and adapters.
 
+/// Domain entities, port traits, and error types.
 pub mod domain;
+/// Scanner adapters for filesystem walking and caching.
 pub mod scanner;
+/// Output formatting dispatch.
 pub mod output;
 
 pub use domain::error::{CacheError, DomainError, ScanError, TrashError};

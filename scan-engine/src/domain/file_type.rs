@@ -3,12 +3,19 @@ use std::fmt;
 /// Classification of a file by its extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FileType {
+    /// Audio file (mp3, flac, wav, etc.).
     Audio,
+    /// Video file (mp4, mkv, avi, etc.).
     Video,
+    /// Image file (jpg, png, gif, etc.).
     Image,
+    /// Document file (pdf, doc, txt, etc.).
     Document,
+    /// Source code file (rs, py, js, etc.).
     Code,
+    /// Archive file (zip, tar, gz, etc.).
     Archive,
+    /// Unrecognized file type.
     Other,
 }
 
