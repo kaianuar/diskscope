@@ -176,10 +176,10 @@ run_omp() { # prompt...  (extra positional args are the task text)
   if [ -n "$task" ]; then
     omp_call+=( "$task" )
   fi
-  timeout "${OMP_TIMEOUT:-900}" "${omp_call[@]}"
+  timeout "${OMP_TIMEOUT:-1200}" "${omp_call[@]}"
   local rc=$?
   if [ "$rc" -eq 124 ]; then
-    echo "xx [pipeline] omp timed out (${OMP_TIMEOUT:-900}s). Marking as incomplete." >&2
+    echo "xx [pipeline] omp timed out (${OMP_TIMEOUT:-1200}s). Marking as incomplete." >&2
   fi
   return "$rc"
 }
@@ -398,7 +398,7 @@ for PHASE in "${PHASES[@]}"; do
       # Sub-chunk: extract deliverables from the plan and build one at a time.
       # Each focused omp call stays within OMP_TIMEOUT.
       # Cap at MAX_SUBCHUNKS (5) per phase — if more, send as one focused call.
-      MAX_SUBCHUNKS=5
+      MAX_SUBCHUNKS="${MAX_SUBCHUNKS:-5}"
       IFS=$'\n' read -r -d '' -a deliverables < <(extract_deliverables "$PHASE" && printf '\0')
       if [ "${#deliverables[@]}" -eq 0 ]; then
         # Fallback: no deliverables found, use monolithic call
