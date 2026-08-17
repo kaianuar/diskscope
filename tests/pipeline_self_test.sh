@@ -81,6 +81,44 @@ else
 fi
 
 # =============================================================================
+# 1c. extract_deliverables: pulls - lines under a phase heading, skips Gate lines
+# =============================================================================
+note ""
+note "## 1c. extract_deliverables"
+extract_deliverables() {
+  local target_phase="$1"
+  local in_phase=0 line
+  while IFS= read -r line; do
+    if echo "$line" | grep -qiE "^##[[:space:]]+phase[[:space:]]+[0-9]+"; then
+      if echo "$line" | grep -qiE "^##[[:space:]]+${target_phase}"; then in_phase=1; else in_phase=0; fi
+      continue
+    fi
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE "^##[[:space:]]"; then break; fi
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE "^- " && ! echo "$line" | grep -qE "^- \*\*Gate"; then
+      echo "$line" | sed "s/^- //"
+    fi
+  done < plan.md
+}
+cat > "$WORK/plan_d.md" <<'EOF'
+## Phase 1: Domain Core
+### Deliverables
+- `src/domain.rs` -- domain types
+- `src/filter.rs` -- filter logic
+- **Gate 1:** cargo test
+## Phase 2: Scan Engine
+### Deliverables
+- `src/scanner.rs` -- scanner
+- `src/cache.rs` -- cache impl
+- **Gate 2:** critic review
+EOF
+cd "$WORK" && cp plan_d.md plan.md
+d1="$(extract_deliverables "Phase 1")"
+d2="$(extract_deliverables "Phase 2")"
+cd "$DIR"
+echo "$d1" | grep -q 'domain.rs' && ! echo "$d1" | grep -q 'Gate' && ok "Phase1: deliverables extracted, no Gate lines" || no "Phase1 deliverables: [$d1]"
+echo "$d2" | grep -q 'scanner.rs' && ! echo "$d2" | grep -q 'Gate' && ok "Phase2: deliverables extracted, no Gate lines" || no "Phase2 deliverables: [$d2]"
+
+# =============================================================================
 # 2. Verdict parsing: last bare PASS/FAIL token determines gate outcome.
 # =============================================================================
 note ""

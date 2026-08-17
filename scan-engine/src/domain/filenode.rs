@@ -75,7 +75,7 @@ impl FileNode {
         }
     }
 
-    fn matches_filters(&self, filters: &[Filter]) -> bool {
+    pub fn matches_filters(&self, filters: &[Filter]) -> bool {
         filters.iter().all(|f| self.matches_filter(f))
     }
 

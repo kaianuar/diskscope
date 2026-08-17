@@ -208,6 +208,34 @@ extract_phases() {
   done
 }
 
+# Extract deliverable lines (starting with "- ") for a specific phase from plan.md.
+# Usage: extract_deliverables "Phase 2"
+# Returns one deliverable per line (the "- `file` -- description" text).
+extract_deliverables() {
+  local target_phase="$1"
+  local in_phase=0 line
+  while IFS= read -r line; do
+    # Detect phase headings: ## Phase N: or ## Phase N —
+    if echo "$line" | grep -qiE '^##[[:space:]]+phase[[:space:]]+[0-9]+'; then
+      # Check if this is the target phase
+      if echo "$line" | grep -qiE "^##[[:space:]]+${target_phase}"; then
+        in_phase=1
+      else
+        in_phase=0
+      fi
+      continue
+    fi
+    # Stop at the next ## heading (different phase or section)
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE '^##[[:space:]]'; then
+      break
+    fi
+    # Extract deliverable lines (skip Gate/test-list lines which start with "- **Gate")
+    if [ "$in_phase" -eq 1 ] && echo "$line" | grep -qE '^- ' && ! echo "$line" | grep -qE '^- \*\*Gate'; then
+      echo "$line" | sed 's/^- //'
+    fi
+  done < plan.md
+}
+
 # ---------------- argument dispatch ----------------
 # `build-skeleton` stays a standalone, NON-RECURSIVE action (run-gates.sh invokes
 # it after Gate 0). It must NOT start the phased loop, or we self-recurse.
@@ -365,8 +393,28 @@ for PHASE in "${PHASES[@]}"; do
 
     # IMPLEMENT this phase only (from approved plan).
     if [ "$phase_round" -eq 1 ]; then
-      echo "==> [phase] implementing: ${PHASE}"
-      run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."
+      # Sub-chunk: extract deliverables from the plan and build one at a time.
+      # Each focused omp call stays within OMP_TIMEOUT.
+      IFS=$'\n' read -r -d '' -a deliverables < <(extract_deliverables "$PHASE" && printf '\0')
+      if [ "${#deliverables[@]}" -eq 0 ]; then
+        # Fallback: no deliverables found, use monolithic call
+        echo "==> [phase] implementing (monolithic): ${PHASE}"
+        log_int "PHASE" "BUILDER" "${PHASE}" "monolithic (no deliverables extracted)"
+        run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."
+      else
+        echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
+        log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
+        for i in "${!deliverables[@]}"; do
+          d="${deliverables[$i]}"
+          # Extract file path from backtick-quoted name (e.g. "`foo/bar.rs` -- desc" -> "foo/bar.rs")
+          file_hint=$(echo "$d" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+          desc=$(echo "$d" | sed 's/`[^`]*`[[:space:]]*--[[:space:]]*//')
+          echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
+          log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
+          run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."
+        done
+        echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
+      fi
     else
       FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"
       [ -z "$FIX_SRC" ] && FIX_SRC="$(cat "${RUNLOG:-}" 2>/dev/null)"
