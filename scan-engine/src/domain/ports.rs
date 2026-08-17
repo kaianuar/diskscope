@@ -19,7 +19,13 @@ pub trait Cache {
 }
 
 /// Port: moves files to system trash with undo capability.
+///
+/// Implementations MUST set `TrashTicket::deleted_at` to the current Unix
+/// timestamp (seconds since epoch) when the delete succeeds.
 pub trait Trash {
+    /// Move `path` to the system trash. Returns a ticket with `path` and
+    /// `deleted_at` for later undo.
     fn delete(&self, path: &Path) -> Result<TrashTicket, TrashError>;
+    /// Restore the file identified by `ticket` from trash.
     fn undo(&self, ticket: &TrashTicket) -> Result<(), TrashError>;
 }

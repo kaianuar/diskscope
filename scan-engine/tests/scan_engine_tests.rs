@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use scan_engine::domain::error::DomainError;
 use scan_engine::domain::filter::Filter;
 use scan_engine::domain::format::OutputFormat;
 use scan_engine::domain::opts::ScanOpts;
@@ -48,7 +47,6 @@ fn debug_max_depth() {
     }
     eprintln!("max_depth=1: file_count={}, total_size={}, all_nodes={}",
         tree.file_count(), tree.total_size(), count_all(&tree.root));
-    print_node(&tree.root, 0);
 }
 
 // ====================================================================

@@ -213,11 +213,14 @@ extract_phases() {
 # Returns one deliverable per line (the "- `file` -- description" text).
 extract_deliverables() {
   local target_phase="$1"
+  # Allow optional space between "Phase" and the number (Phase1 vs Phase 1)
+  local target_re
+  target_re=$(echo "$target_phase" | sed 's/Phase/Phase[[:space:]]*/')
   local in_phase=0 line
   while IFS= read -r line; do
     # Match ## or ### headings (Phase N or PhaseN)
-    if echo "$line" | grep -qiE '^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+'; then
-      if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+${target_phase}"; then
+    if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+phase[[:space:]]*[0-9]+"; then
+      if echo "$line" | grep -qiE "^#{2,3}[[:space:]]+${target_re}"; then
         in_phase=1
       else
         in_phase=0
@@ -394,13 +397,15 @@ for PHASE in "${PHASES[@]}"; do
     if [ "$phase_round" -eq 1 ]; then
       # Sub-chunk: extract deliverables from the plan and build one at a time.
       # Each focused omp call stays within OMP_TIMEOUT.
+      # Cap at MAX_SUBCHUNKS (5) per phase — if more, send as one focused call.
+      MAX_SUBCHUNKS=5
       IFS=$'\n' read -r -d '' -a deliverables < <(extract_deliverables "$PHASE" && printf '\0')
       if [ "${#deliverables[@]}" -eq 0 ]; then
         # Fallback: no deliverables found, use monolithic call
         echo "==> [phase] implementing (monolithic): ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "monolithic (no deliverables extracted)"
         run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."
-      else
+      elif [ "${#deliverables[@]}" -le "$MAX_SUBCHUNKS" ]; then
         echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
         log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
         for i in "${!deliverables[@]}"; do
@@ -413,6 +418,12 @@ for PHASE in "${PHASES[@]}"; do
           run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
+      else
+        # Too many deliverables — send as one focused multi-file call
+        dl_list=$(printf '  - %s\n' "${deliverables[@]}")
+        echo "==> [phase] implementing ${#deliverables[@]} deliverables (batched) for ${PHASE}"
+        log_int "PHASE" "BUILDER" "${PHASE}" "batched: ${#deliverables[@]} deliverables"
+        run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} Do NOT edit plan.md. Do not implement future phases."
       fi
     else
       FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"

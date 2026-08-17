@@ -76,7 +76,11 @@ impl MockTrash {
 impl Trash for MockTrash {
     fn delete(&self, path: &Path) -> Result<TrashTicket, TrashError> {
         self.deleted.borrow_mut().push(path.to_path_buf());
-        Ok(TrashTicket { path: path.to_path_buf() })
+        let deleted_at = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Ok(TrashTicket { path: path.to_path_buf(), deleted_at })
     }
 
     fn undo(&self, ticket: &TrashTicket) -> Result<(), TrashError> {

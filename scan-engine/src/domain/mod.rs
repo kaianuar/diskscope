@@ -21,6 +21,8 @@ pub struct CachedEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrashTicket {
     pub path: PathBuf,
+    /// Unix timestamp (seconds since epoch) when the file was deleted.
+    pub deleted_at: u64,
 }
 
 pub mod mocks;
