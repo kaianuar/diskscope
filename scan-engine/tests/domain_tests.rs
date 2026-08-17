@@ -300,3 +300,126 @@ fn should_respect_max_depth() {
     let filtered0 = root.filter(&[], Some(0)).unwrap();
     assert!(filtered0.children.is_empty());
 }
+
+// ====================================================================
+// Phase 1: Domain Core — 10 plan-specified tests
+// ====================================================================
+
+use scan_engine::{FileType, Size, FileTree};
+
+// Test 4 (plan): should format Size as human-readable string when bytes > 1024
+#[test]
+fn should_format_size_as_human_readable() {
+    assert_eq!(Size::new(500).to_string(), "500.0 B");
+    assert_eq!(Size::new(1024).to_string(), "1.0 KB");
+    assert_eq!(Size::new(1048576).to_string(), "1.0 MB");
+    assert_eq!(Size::new(1073741824).to_string(), "1.0 GB");
+}
+
+// Test 5 (plan): should classify file type by extension when extension is known
+#[test]
+fn should_classify_file_type_by_extension() {
+    assert_eq!(FileType::from_extension("mp3"), FileType::Audio);
+    assert_eq!(FileType::from_extension("mp4"), FileType::Video);
+    assert_eq!(FileType::from_extension("png"), FileType::Image);
+    assert_eq!(FileType::from_extension("pdf"), FileType::Document);
+    assert_eq!(FileType::from_extension("rs"), FileType::Code);
+    assert_eq!(FileType::from_extension("zip"), FileType::Archive);
+}
+
+// Test 6 (plan): should return Other when extension is unknown
+#[test]
+fn should_return_other_for_unknown_extension() {
+    assert_eq!(FileType::from_extension("xyz"), FileType::Other);
+    assert_eq!(FileType::from_extension(""), FileType::Other);
+    assert_eq!(FileType::from_filename("noext"), FileType::Other);
+}
+
+// Test 2 (plan): should calculate total_size when building FileTree from children
+#[test]
+fn should_calculate_total_size_in_file_tree() {
+    let a = make_node("a.txt", 100);
+    let b = make_node("b.txt", 200);
+    let root = make_dir("root", vec![a, b]);
+    let tree = FileTree::new(root);
+    assert_eq!(tree.total_size(), 300);
+}
+
+// Test 3 (plan): should count files recursively when tree has nested children
+#[test]
+fn should_count_files_recursively_in_tree() {
+    let a = make_node("a.txt", 10);
+    let b = make_node("b.txt", 20);
+    let sub = make_dir("sub", vec![make_node("c.txt", 30)]);
+    let root = make_dir("root", vec![a, b, sub]);
+    let tree = FileTree::new(root);
+    assert_eq!(tree.file_count(), 3);
+}
+
+// Test 7 (plan): should match file when size within range filter
+#[test]
+fn should_match_file_when_size_within_range() {
+    let node = make_node("mid.txt", 500);
+    let root = make_dir("root", vec![node]);
+    let filtered = root.filter(&[Filter::MinSize(100), Filter::MaxSize(1000)], None).unwrap();
+    assert_eq!(filtered.children.len(), 1);
+    assert_eq!(filtered.children[0].name, "mid.txt");
+}
+
+// Test 8 (plan): should reject file when size outside range filter
+#[test]
+fn should_reject_file_when_size_outside_range() {
+    let small = make_node("tiny.txt", 50);
+    let big = make_node("huge.txt", 99999);
+    let root = make_dir("root", vec![small, big]);
+    let filtered = root.filter(&[Filter::MinSize(100), Filter::MaxSize(1000)], None);
+    // Both files fail: 50 < 100 and 99999 > 1000, so the entire tree is pruned
+    assert!(filtered.is_none());
+}
+
+// Test 9 (plan): should match file when name matches glob pattern
+#[test]
+fn should_match_file_when_name_matches_glob() {
+    let a = make_node("test_main.rs", 100);
+    let b = make_node("src.rs", 200);
+    let c = make_node("test_lib.rs", 300);
+    let root = make_dir("root", vec![a, b, c]);
+    let filtered = root.filter(&[Filter::NamePattern("test_*".into())], None).unwrap();
+    assert_eq!(filtered.children.len(), 2);
+    for child in &filtered.children {
+        assert!(child.name.starts_with("test_"));
+    }
+}
+
+// Test 10 (plan): should combine multiple filters with AND logic
+#[test]
+fn should_combine_multiple_filters_with_and_logic() {
+    let big_rs = {
+        let mut n = make_node("large.rs", 5000);
+        n.mtime = recent_mtime();
+        n
+    };
+    let small_rs = make_node("small.rs", 100); // fails MinSize
+    let big_txt = {
+        let mut n = make_node("large.txt", 5000);
+        n.mtime = recent_mtime();
+        n
+    };
+    let old_rs = {
+        let mut n = make_node("old.rs", 5000);
+        n.mtime = old_mtime();
+        n
+    };
+    let root = make_dir("root", vec![big_rs, small_rs, big_txt, old_rs]);
+
+    let filters = vec![
+        Filter::MinSize(1000),
+        Filter::Extension("rs".into()),
+        Filter::MaxAge(Duration::from_secs(300)),
+    ];
+    let filtered = root.filter(&filters, None).unwrap();
+
+    // Only "large.rs" passes all three: size >= 1000, ext == "rs", recent
+    assert_eq!(filtered.children.len(), 1);
+    assert_eq!(filtered.children[0].name, "large.rs");
+}

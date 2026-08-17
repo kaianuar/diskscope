@@ -31,6 +31,15 @@ impl FileNode {
         self.size + self.children.iter().map(|c| c.total_size()).sum::<u64>()
     }
 
+    /// Count of non-directory leaf nodes (recursive).
+    pub fn file_count(&self) -> u64 {
+        if self.children.is_empty() && !self.is_dir {
+            1
+        } else {
+            self.children.iter().map(|c| c.file_count()).sum()
+        }
+    }
+
     /// Return a new tree containing only nodes matching all `filters`, bounded
     /// by `max_depth` (None = unlimited). Directories are pruned when no
     /// descendant survives.

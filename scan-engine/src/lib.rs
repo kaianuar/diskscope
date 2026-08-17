@@ -3,11 +3,14 @@
 pub mod domain;
 
 pub use domain::error::{CacheError, DomainError, ScanError, TrashError};
+pub use domain::file_type::FileType;
 pub use domain::filenode::FileNode;
 pub use domain::filter::Filter;
 pub use domain::format::OutputFormat;
 pub use domain::opts::ScanOpts;
+pub use domain::size::Size;
 pub use domain::sort::SortKey;
+pub use domain::tree::FileTree;
 pub use domain::{CachedEntry, TrashTicket};
 
 /// Re-export of port traits.

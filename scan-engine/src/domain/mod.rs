@@ -1,10 +1,13 @@
 pub mod error;
+pub mod file_type;
 pub mod filenode;
 pub mod filter;
 pub mod format;
 pub mod opts;
 pub mod ports;
+pub mod size;
 pub mod sort;
+pub mod tree;
 
 // Re-export domain-common types at domain level
 use std::path::PathBuf;
