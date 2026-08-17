@@ -47,6 +47,21 @@ FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"
 GATE0_VERDICT="/tmp/gate0_verdict.txt"
 RUNLOG="/tmp/last_gate_failure.txt"
 REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE:-/tmp/review_notes.txt}"
+# Builder<->critic interaction log: a chronological, scannable record of what the
+# builder was asked, what the critic reviewer saw (incl. a content-hash of the file
+# it reviewed so stale copies are immediately visible), and the verdict it returned.
+# Set INTERACTION_LOG=/dev/null to disable. Default /tmp/omp_interaction.log.
+INTERACTION_LOG="${INTERACTION_LOG:-/tmp/omp_interaction.log}"
+
+log_int() {  # log_int <section> <role> <phase/round> <message>
+  [ -n "$INTERACTION_LOG" ] || return 0
+  local t
+  t="$(date +%H:%M:%S)"
+  printf '%s  [%s] [%s] %-6s %s\n' "$t" "$1" "$2" "$3" "$4" >> "$INTERACTION_LOG"
+}
+hash_of() {  # sha256 prefix of a file (or N/A if missing) - used to spot stale content
+  [ -f "$1" ] && sha256sum "$1" | cut -c1-12 || echo "N/A(no-file)"
+}
 
 PROJ_ROOT="$(pwd)"
 
@@ -247,12 +262,15 @@ echo ""
 echo "============================="
 echo " PHASE 0: PLAN"
 echo "============================="
+[ -n "$INTERACTION_LOG" ] && : > "$INTERACTION_LOG"   # fresh interaction log per run
+log_int "PLAN" "----" "start" "phase 0 plan (max ${MAX_PLAN_ROUNDS} rounds)"
 
 plan_round=0
 while [ "$plan_round" -lt "$MAX_PLAN_ROUNDS" ]; do
   plan_round=$((plan_round+1))
   echo ""
   echo "  ---- plan round ${plan_round}/${MAX_PLAN_ROUNDS} ----"
+  log_int "PLAN" "----" "round" "round ${plan_round}/${MAX_PLAN_ROUNDS} starts"
 
   # Build step: create/revise plan.md ONLY.
   if [ ! -f plan.md ]; then
@@ -263,6 +281,10 @@ while [ "$plan_round" -lt "$MAX_PLAN_ROUNDS" ]; do
     run_omp "Revise plan.md ONLY to resolve the architecture review findings below. Do NOT create or edit any other file, and do NOT write any code — planning only. Keep the phase structure and do not let the plan balloon.\n\nFINDINGS:\n$(cat "${GATE0_VERDICT:-}" 2>/dev/null)"
   fi
 
+  # Log the plan the BUILDER produced NOW (its content hash) - the critic must
+  # review THIS exact state; a differing critic-side hash later flags staleness.
+  log_int "PLAN" "BUILDER" "r${plan_round}" "produced plan.md hash=$(hash_of plan.md) size=$(wc -c < plan.md 2>/dev/null || echo 0)B"
+
   # Clear stale verdict, then run the plan gate ONLY (not the full run-gates,
   # which would try to build code before the plan is approved).
   rm -f "${GATE0_VERDICT}" "${FINDINGS_FILE}"
@@ -270,12 +292,15 @@ while [ "$plan_round" -lt "$MAX_PLAN_ROUNDS" ]; do
   REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" bash "$PROJ_ROOT/tests/gate0_plan_review.sh"
   PLAN_EC=$?
   set -e
+  log_int "PLAN" "CRITIC" "r${plan_round}" "reviewed plan.md hash=$(hash_of plan.md); verdict=$(tail -1 "${GATE0_VERDICT:-}" 2>/dev/null | tr -d '[:space:]'); P1=$(grep -E '\[P1\]|^- \[P1\]' "${GATE0_VERDICT:-}" 2>/dev/null | wc -l)"
 
   if [ "$PLAN_EC" -eq 0 ]; then
+    log_int "PLAN" "CRITIC" "r${plan_round}" "**** PLAN APPROVED ****"
     echo "==> [plan] PLAN APPROVED. Proceeding to phased build."
     break
   fi
   echo "==> [plan] plan rejected (round ${plan_round}); feeding findings back."
+  log_int "PLAN" "CRITIC" "r${plan_round}" "REJECTED - findings fed to builder"
 done
 
 if [ "$PLAN_EC" -ne 0 ]; then
@@ -327,12 +352,14 @@ for PHASE in "${PHASES[@]}"; do
   echo "=============================================================="
   echo "  PHASE ${phase_idx}/${#PHASES[@]} : ${PHASE}"
   echo "=============================================================="
+  log_int "PHASE" "----" "${PHASE}" "phase ${phase_idx}/${#PHASES[@]} starts"
 
   phase_round=0
   phase_done=0
   while [ "$phase_round" -lt "$MAX_PHASE_ROUNDS" ] && [ "$phase_done" -eq 0 ]; do
     phase_round=$((phase_round+1))
     echo ""
+    log_int "PHASE" "----" "${PHASE}" "round ${phase_round}/${MAX_PHASE_ROUNDS}"
     echo "  ---- phase build round ${phase_round}/${MAX_PHASE_ROUNDS} ----"
 
     # IMPLEMENT this phase only (from approved plan).
@@ -356,6 +383,7 @@ for PHASE in "${PHASES[@]}"; do
     bash "$PROJ_ROOT/tests/gate.sh" 2>&1 | tee "${RUNLOG}"
     T_EC=${PIPESTATUS[0]}
     set -e
+    log_int "PHASE" "GATE1" "${PHASE}" "tests rc=${T_EC}"
     if [ "$T_EC" -ne 0 ]; then
       echo "  xx Gate 1 (tests) failed for phase ${PHASE} (round ${phase_round})."
       if [ "$phase_round" -ge "$MAX_PHASE_ROUNDS" ]; then
@@ -378,6 +406,7 @@ for PHASE in "${PHASES[@]}"; do
     REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}" CRITIC_MODEL="${CRITIC_MODEL:-kimi-k2.7-code}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
     C_EC=${PIPESTATUS[0]}
     set -e
+    log_int "PHASE" "GATE2" "${PHASE}" "critic rc=${C_EC} verdict=$(tail -1 /tmp/review_verdict.txt 2>/dev/null | tr -d '[:space:]') P1=$(grep -E '\[P1\]|^- \[P1\]' /tmp/review_verdict.txt 2>/dev/null | wc -l)"
     if [ "$C_EC" -eq 0 ]; then
       # Phase green: commit it so the NEXT phase has a clean diff baseline.
       git add -A 2>/dev/null || true
