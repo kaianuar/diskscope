@@ -33,11 +33,11 @@ fi
 if [ -f "$PROJ_ROOT/.env" ]; then
   set -a; . "$PROJ_ROOT/.env"; set +a
 fi
-CRITIC_MODEL="kimi-k2.7-code"
-CRITIC_URL="https://opencode.ai/zen/go/v1/chat/completions"
-CRITIC_API_KEY="${OPENCODE_GO_API_KEY:-}"
+CRITIC_MODEL="mimo-v2.5-pro"
+CRITIC_URL="https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+CRITIC_API_KEY="${XIAOMI_API_KEY:-}"
 if [ -z "$CRITIC_API_KEY" ]; then
-  echo "xx OPENCODE_GO_API_KEY not set. Add to .env (OpenCode Go key)"
+  echo "xx XIAOMI_API_KEY not set. Add to .env (Xiaomi key)"
   exit 1
 fi
 
@@ -295,17 +295,17 @@ cat > /tmp/build_request.js << 'NODEEOF'
 const fs = require('fs');
 const prompt = fs.readFileSync('/tmp/gate0_prompt_final.txt', 'utf8');
 const payload = {
-  model: 'kimi-k2.7-code',
+  model: 'mimo-v2.5-pro',
   messages: [{ role: 'user', content: prompt }],
   max_tokens: 64000,
-  temperature: 1   // OpenCode Go reasoning models require temperature=1
+  temperature: 0.2
 };
 fs.writeFileSync('/tmp/gate0_request.json', JSON.stringify(payload, null, 2));
 NODEEOF
 
 node /tmp/build_request.js
 
-# POST to the critic endpoint (OpenCode Go)
+# POST to the critic endpoint (Xiaomi MiMo)
 curl -sS --max-time 600 \
   -X POST "${CRITIC_URL}" \
   -H "Authorization: Bearer ${CRITIC_API_KEY}" \

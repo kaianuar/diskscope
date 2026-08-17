@@ -19,7 +19,7 @@ set -uo pipefail
 PROJ_ROOT="$(pwd)"
 
 DIFF_FILE="${1:-/tmp/review.diff}"
-CRITIC_MODEL="${CRITIC_MODEL:-kimi-k2.7-code}"     # OpenCode Go model id (OpenAI-compatible)
+CRITIC_MODEL="${CRITIC_MODEL:-mimo-v2.5-pro}"     # Xiaomi MiMo model id (OpenAI-compatible)
 CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-300}"             # seconds; large diffs need headroom
 CRITIC_MAX_TOKENS="${CRITIC_MAX_TOKENS:-16000}"     # high: reasoning models burn tokens thinking and return empty if too low
 CRITIC_STANDARD="${CRITIC_STANDARD:-production}"    # production | mvp
@@ -31,12 +31,12 @@ REVIEW_HISTORY_FILE="${REVIEW_HISTORY_FILE:-/tmp/review_history.txt}"
 # status. The critic reads it each round and re-flags ONLY OPEN items, breaking
 # the "re-raise forever" deadlock. Cleared by the pipeline at phase start.
 REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}"
-CRITIC_URL="${CRITIC_URL:-https://opencode.ai/zen/go/v1/chat/completions}"
+CRITIC_URL="${CRITIC_URL:-https://token-plan-sgp.xiaomimimo.com/v1/chat/completions}"
 
 echo "==> GATE 2: adversarial review (critic=${CRITIC_MODEL}, standard=${CRITIC_STANDARD}, timeout=${CRITIC_TIMEOUT}s, max_tokens=${CRITIC_MAX_TOKENS})"
 
 # Load the project's .env — the ONLY env this pipeline reads (per project setup:
-# keys live in the repo's .env, not in Hermes's file). This puts OPENCODE_GO_API_KEY
+# keys live in the repo's .env, not in Hermes's file). This puts XIAOMI_API_KEY
 # etc. into scope whether run via run-gates.sh or directly in omp.
 if [ -f "$PROJ_ROOT/.env" ]; then
   set -a; # shellcheck disable=SC1091
@@ -44,15 +44,15 @@ if [ -f "$PROJ_ROOT/.env" ]; then
   set +a
 fi
 
-# OpenCode Go key — read from the environment (which we just loaded from .env).
+# Xiaomi MiMo key — read from the environment (which we just loaded from .env).
 # Do NOT fall back to ~/.hermes/.env: a cloned repo sets up its provider key in
 # the project's .env, not in Hermes's file.
-CRITIC_API_KEY="${OPENCODE_GO_API_KEY:-${CRITIC_API_KEY:-}}"
+CRITIC_API_KEY="${XIAOMI_API_KEY:-${CRITIC_API_KEY:-}}"
 if [ -z "$CRITIC_API_KEY" ]; then
-  echo "xx OPENCODE_GO_API_KEY not set. Add it to $PROJ_ROOT/.env with the OpenCode Go key."
+  echo "xx XIAOMI_API_KEY not set. Add it to $PROJ_ROOT/.env with the Xiaomi key."
   exit 1
 fi
-[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using OPENCODE_GO_API_KEY from the environment"
+[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using XIAOMI_API_KEY from the environment"
 
 if [ ! -s "$DIFF_FILE" ]; then
   echo "!! No diff (${DIFF_FILE} empty). Pass a path to the diff."
@@ -158,17 +158,17 @@ requirements, treat it as P3 at most.
 
 Tag format: start each finding line with [P0], [P1], [P2], [P3], or [P4].
 Every P0/P1 finding MUST end with a concrete remediation on its own line:
-  `-> FIX: <exactly what to change in the code, with specific detail>`
-  Example: "-> FIX: in filter.rs line 14, change the `Code` match arm to add `yml` after `yaml`."
-  A P0/P1 without a `-> FIX:` line is a review defect. Never just say "this is broken" — tell the
+  -> FIX: exactly what to change in the code, with specific detail
+  Example: -> FIX: in filter.rs line 14, change the Code match arm to add yml after yaml.
+  A P0/P1 without a FIX line is a review defect. Never just say "this is broken" -- tell the
   builder precisely what to change so the next round can satisfy it.
 
-RESPECT-YOUR-OWN-FIX CONTRACT — this closes the convergence loop:
-  Your `-> FIX:` line is the CONTRACT. If the current diff contains the change your FIX requested
+RESPECT-YOUR-OWN-FIX CONTRACT -- this closes the convergence loop:
+  Your FIX line is the CONTRACT. If the current diff contains the change your FIX requested
   (even phrased slightly differently), mark that finding RESOLVED and do NOT re-raise it. Satisfying
   your stated FIX satisfies the finding. Do not escalate or re-flag an item whose FIX is now present
   just because you would now prefer a different implementation. Only a NEW, genuinely-unraised defect
-  may block — never a re-litigation of a satisfied FIX.
+  may block -- never a re-litigation of a satisfied FIX.
 
 Review the diff harshly for correctness, logic, security, edge cases, and test coverage.
 List findings sorted by severity (P0 first, then P1, P2, P3, P4).
@@ -182,8 +182,7 @@ process.stdout.write(JSON.stringify({
   model,
   messages:[{role:'user',content:prompt}],
   max_tokens:Number(maxTokens||16000),
-  // OpenCode Go reasoning models (kimi-k2.7-code) only accept temperature=1.
-  temperature:1
+  temperature:0.2
 }));
 NODE
 
