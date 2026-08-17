@@ -8,7 +8,7 @@
 ## Development Setup
 
 ```bash
-git clone https://github.com/nicholasgasior/diskscope.git
+git clone https://github.com/kaianuar/diskscope.git
 cd diskscope
 cargo test                    # verify everything works
 cargo clippy -- -D warnings   # verify lint passes
