@@ -163,6 +163,13 @@ Every P0/P1 finding MUST end with a concrete remediation on its own line:
   A P0/P1 without a `-> FIX:` line is a review defect. Never just say "this is broken" — tell the
   builder precisely what to change so the next round can satisfy it.
 
+RESPECT-YOUR-OWN-FIX CONTRACT — this closes the convergence loop:
+  Your `-> FIX:` line is the CONTRACT. If the current diff contains the change your FIX requested
+  (even phrased slightly differently), mark that finding RESOLVED and do NOT re-raise it. Satisfying
+  your stated FIX satisfies the finding. Do not escalate or re-flag an item whose FIX is now present
+  just because you would now prefer a different implementation. Only a NEW, genuinely-unraised defect
+  may block — never a re-litigation of a satisfied FIX.
+
 Review the diff harshly for correctness, logic, security, edge cases, and test coverage.
 List findings sorted by severity (P0 first, then P1, P2, P3, P4).
 Then list NON-BLOCKING NOTES (these are P3/P4 by definition).

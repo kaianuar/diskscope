@@ -235,6 +235,14 @@ ACTIONABLE FEEDBACK — every P0/P1 finding MUST end with a concrete remediation
   isolation, and (d) why egui for the treemap. Point each at the requirement it serves."
   A finding without a concrete `-> FIX:` remediation is itself a review defect. Vague rejections
   ("this is not justified enough") are not acceptable — tell the builder precisely what to add.
+
+RESPECT-YOUR-OWN-FIX CONTRACT — this closes the convergence loop:
+  Your `-> FIX:` line is the CONTRACT. If the current plan contains the change your FIX requested
+  (even phrased differently, or not exactly to your preferred level of detail), mark that finding
+  RESOLVED and do NOT re-raise it. Satisfying your stated FIX satisfies the finding. Do not reject a
+  plan for "not justifying X well enough" when your prior FIX was "add a justification section" and one
+  now exists. Only a NEW, genuinely-unraised defect may block — never a re-litigation of a satisfied FIX.
+  Re-opening or escalating an item whose FIX is now present is a review defect.
 PROMPT_EOF
 
 # Build the actual prompt with substitutions
