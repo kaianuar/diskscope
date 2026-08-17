@@ -27,6 +27,10 @@ CRITIC_REQUIREMENTS="${CRITIC_REQUIREMENTS:-requirements.md}"  # acceptance/scop
 # Review-history file: feed the critic its OWN prior verdicts so it does not
 # contradict earlier rulings or re-raise already-settled items. Appended each round.
 REVIEW_HISTORY_FILE="${REVIEW_HISTORY_FILE:-/tmp/review_history.txt}"
+# Structured issue ledger: per-phase record of findings with OPEN/RESOLVED/BACKLOG
+# status. The critic reads it each round and re-flags ONLY OPEN items, breaking
+# the "re-raise forever" deadlock. Cleared by the pipeline at phase start.
+REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}"
 OPENROUTER_URL="https://openrouter.ai/api/v1/chat/completions"
 
 echo "==> GATE 2: adversarial review (critic=${CRITIC_MODEL}, standard=${CRITIC_STANDARD}, timeout=${CRITIC_TIMEOUT}s, max_tokens=${CRITIC_MAX_TOKENS})"
@@ -65,16 +69,34 @@ fi
 
 # Build the JSON request with the review prompt + requirements + diff (max_tokens
 # generous for reasoning models; not streamed).
-node - "$DIFF_FILE" "$CRITIC_MODEL" "$CRITIC_STANDARD" "$CRITIC_REQUIREMENTS" "$CRITIC_MAX_TOKENS" "$REVIEW_HISTORY_FILE" <<'NODE' > /tmp/review_request.json
+node - "$DIFF_FILE" "$CRITIC_MODEL" "$CRITIC_STANDARD" "$CRITIC_REQUIREMENTS" "$CRITIC_MAX_TOKENS" "$REVIEW_HISTORY_FILE" "$REVIEW_LEDGER" <<'NODE' > /tmp/review_request.json
 const fs=require('fs');
-const [ , , diffFile, model, standard, reqFile, maxTokens, histFile ]=process.argv;
-const diff=fs.readFileSync(diffFile,'utf8');
+const [ , , diffFile, model, standard, reqFile, maxTokens, histFile, ledgerFile ]=process.argv;
+// Cap the diff so the OpenRouter request stays under its size limit (large diffs
+// across phases caused 400 "JSON parsing failed"). Head+tail keeps the start and end.
+let diff=fs.readFileSync(diffFile,'utf8');
+const MAX_DIFF=30000;
+if (Buffer.byteLength(diff,'utf8')>MAX_DIFF){
+  const head=diff.slice(0,Math.floor(MAX_DIFF/2));
+  const tail=diff.slice(-Math.floor(MAX_DIFF/2));
+  diff=head+'\n...[truncated '+(Buffer.byteLength(diff,'utf8')-MAX_DIFF)+' bytes]...\n'+tail;
+}
 let req='';
 try { req=fs.readFileSync(reqFile,'utf8').slice(0,8000); } catch(e){}
 // Load this critic's OWN prior verdicts (its review history) so it can see what
 // it already asked for and avoid contradicting itself or re-raising settled items.
 let history='';
-try { history=fs.readFileSync(histFile,'utf8').slice(-6000); } catch(e){};
+try { history=fs.readFileSync(histFile,'utf8').slice(-6000); } catch(e){}
+// Load the structured ISSUE LEDGER: each previously-raised finding with status.
+let ledger='';
+try { ledger=fs.readFileSync(ledgerFile,'utf8').slice(-4000); } catch(e){}
+// Escape backticks and template-literal expressions in user-controlled content
+// so they cannot break the template literal that builds the prompt.
+const esc = s => (s||'').replace(/[`\\]/g, '\\$&').replace(/\$\{/g, '\\${');
+const historyBlock = esc(history);
+const reqBlock = esc(req);
+const diffBlock = esc(diff);
+const ledgerBlock = esc(ledger||'(no open issues yet)');
 // scope-aware severity instruction
 const scope = standard==='mvp'
   ? `GRADING (MVP standard): Use strict judgement. A real correctness or security defect MUST be FAIL.
@@ -87,16 +109,27 @@ const prompt=`You are an adversarial code reviewer. A builder produced the diff 
 ${scope}
 
 PROJECT REQUIREMENTS / SCOPE (in/out-of-scope context):
-${req}
+${reqBlock}
 
-YOUR PRIOR REVIEWS OF THIS CODE (history — read and honor it):
-${history||'(none yet)'}
+YOUR PRIOR REVIEWS OF THIS CODE (history - read and honor it):
+${historyBlock||'(none yet)'}
 - If HISTORY is present: it records what you ALREADY told the builder to change in
   earlier rounds. Treat resolved items as resolved; do NOT re-raise the same defect
   as a blocker, and do not contradict a ruling you already gave. Only NEW,
   not-yet-raised defects may become blockers.
 
-VETO DISCIPLINE — these rules govern your ENTIRE review:
+ISSUE LEDGER (structured status of every previously-raised finding):
+${ledgerBlock}
+- Each ledger line is: [P<N>] STATUS <OPEN|RESOLVED|BACKLOG> <description>
+- Re-flag ONLY items marked OPEN. An item marked RESOLVED is closed: do NOT re-raise
+  it as a P0/P1 blocker unless the CURRENT diff shows a demonstrable regression of that
+  exact fix.
+- CONVERGENCE RULE: if the current code satisfies a fix you stated in an earlier round,
+  acknowledge it as resolved and do NOT re-flag it. Do not let an ever-repeating concern
+  block convergence when the described fix is present in the code.
+- New P0/P1 findings this round are the only reasons to FAIL.
+
+VETO DISCIPLINE - these rules govern your ENTIRE review:
 - REQUIREMENTS ARE THE HIGHEST AUTHORITY. If the code follows a design the PROJECT
   REQUIREMENTS explicitly mandate (e.g. an extension-based file-type classifier,
   a specific mandated dependency or architecture), you MUST NOT FAIL it for that
@@ -105,7 +138,7 @@ VETO DISCIPLINE — these rules govern your ENTIRE review:
 - SCOPE. Review THIS diff (this phase's code). Do not fail it for later-phase or
   whole-project concerns outside what this diff adds or changes.
 
-SEVERITY CLASSIFICATION — tag EVERY finding with exactly one of these (P0..P4):
+SEVERITY CLASSIFICATION - tag EVERY finding with exactly one of these (P0..P4):
 - P0 = CRITICAL BLOCKER: security vulnerability, data loss/corruption, crash, or a
   clear violation of a REQUIREMENT acceptance criterion. Phase MUST NOT proceed.
 - P1 = MAJOR BLOCKER: a real correctness or logic defect that breaks the build or
@@ -120,10 +153,10 @@ SEVERITY CLASSIFICATION — tag EVERY finding with exactly one of these (P0..P4)
 
 A finding is P0/P1 ONLY if it is a genuine, concrete defect that breaks the build or
 an acceptance criterion in THIS diff. A preference, refactor suggestion, or future
-idea is P3 or P4 — never P0/P1. If a design choice is not contradicted by the
+idea is P3 or P4 - never P0/P1. If a design choice is not contradicted by the
 requirements, treat it as P3 at most.
 
-Tag format: start each finding line with `[P0]`, `[P1]`, `[P2]`, `[P3]`, or `[P4]`.
+Tag format: start each finding line with [P0], [P1], [P2], [P3], or [P4].
 
 Review the diff harshly for correctness, logic, security, edge cases, and test coverage.
 List findings sorted by severity (P0 first, then P1, P2, P3, P4).
@@ -132,7 +165,7 @@ End with a SINGLE final line that is PASS if there are NO P0 or P1 findings, els
 Verbatim: if any P0/P1 finding exists, the last line is exactly "FAIL". Otherwise it is exactly "PASS".
 
 DIFF:
-${diff}`;
+${diffBlock}`;
 process.stdout.write(JSON.stringify({
   model,
   messages:[{role:'user',content:prompt}],
@@ -200,6 +233,14 @@ REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE:-/tmp/review_notes.txt}"
   echo "VERDICT: ${VERDICT:-unknown}"
   cat /tmp/review_verdict.txt
 } >> "${REVIEW_HISTORY_FILE}" 2>/dev/null
+
+# ── Update the structured ISSUE LEDGER ────────────────────────────────────────
+# Each finding is keyed by a STABLE SYMBOL (e.g. `test_incremental_scan`, a fn or
+# struct name) so re-phrasings of the same issue match. This breaks the
+# "re-raise forever" deadlock: fixed items become RESOLVED and are not re-flagged.
+# Logic lives in tests/lib/review_ledger.py (single source of truth, self-tested).
+REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}"
+python3 "$PROJ_ROOT/tests/lib/review_ledger.py" "$REVIEW_LEDGER" /tmp/review_verdict.txt
 
 echo "---- critic verdict ----"
 echo "(last verdict token: ${VERDICT:-<none>})"

@@ -219,6 +219,9 @@ with open('/tmp/gate0_prompt.txt', 'r') as f:
     template = f.read()
 
 plan = open('${PLAN_FILE}', 'r').read()
+# Cap the plan so the request stays under OpenRouter's size limit (400 on large plans).
+if len(plan) > 30000:
+    plan = plan[:15000] + "\n...[truncated " + str(len(plan)-30000) + " bytes]...\n" + plan[-15000:]
 guidelines = open('${GUIDELINES_FILE}', 'r').read()[:20000]
 
 ponytail = ''
