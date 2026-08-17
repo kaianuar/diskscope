@@ -14,7 +14,7 @@ required-features = ["tauri"]
 
 [features]
 default = ["tauri"]
-tauri = ["dep:tauri", "dep:tauri-plugin-shell"]
+tauri = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-build"]
 
 [dependencies]
 scan-engine = { path = "../../scan-engine" }
