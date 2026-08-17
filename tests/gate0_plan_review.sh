@@ -286,7 +286,9 @@ prompt = template.replace('{{PLAN_CONTENT}}', plan).replace('{{GUIDELINES_CONTEN
 
 with open('/tmp/gate0_prompt_final.txt', 'w') as f:
     f.write(prompt)
-" 2>/dev/null || true
+    f.flush()
+    os.fsync(f.fileno())
+"
 
 # Build JSON request using node
 cat > /tmp/build_request.js << 'NODEEOF'
