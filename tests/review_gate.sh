@@ -202,11 +202,18 @@ if [ "$CURL_EC" -ne 0 ]; then
 fi
 
 # Extract the assistant content and print it (for the log + verdict).
+# Tolerant of concatenated JSON (MiMo/SSE can return two JSON objects).
 node - <<'NODE' > /tmp/review_verdict.txt
 const fs=require('fs');
-let d;
-try { d=JSON.parse(fs.readFileSync('/tmp/review_response.json','utf8')); }
-catch(e){ console.log('RESPONSE-ERROR: '+e.message); process.exit(1); }
+const raw=fs.readFileSync('/tmp/review_response.json','utf8');
+let d=null, parsed=false;
+if(raw.trim().startsWith('{')){
+  for(let i=raw.indexOf('}'); i<raw.length; i=raw.indexOf('}',i+1)){
+    try{ d=JSON.parse(raw.slice(0,i+1)); parsed=true; break; }catch(e){}
+  }
+}
+if(!parsed){ try{ d=JSON.parse(raw); parsed=true; }catch(e){} }
+if(!parsed){ console.log('RESPONSE-ERROR: could not parse response JSON'); process.exit(1); }
 if(d.error){ console.log('API-ERROR: '+JSON.stringify(d.error)); process.exit(1); }
 const content=(d.choices?.[0]?.message?.content)||'(empty)';
 console.log(content);

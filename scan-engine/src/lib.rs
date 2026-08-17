@@ -1,3 +1,6 @@
+#![deny(clippy::all)]
+#![deny(missing_docs)]
+
 //! DiskScope scan engine — domain entities, port traits, and adapters.
 
 pub mod domain;

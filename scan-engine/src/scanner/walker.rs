@@ -24,7 +24,8 @@ pub fn walk_directory(
         .git_ignore(scan_opts.respect_gitignore)
         .git_global(scan_opts.respect_gitignore)
         .git_exclude(scan_opts.respect_gitignore)
-        .hidden(false);
+        .hidden(false)
+        .require_git(false);
 
     if let Some(depth) = scan_opts.max_depth {
         builder.max_depth(Some(depth));

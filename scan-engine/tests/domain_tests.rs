@@ -423,3 +423,54 @@ fn should_combine_multiple_filters_with_and_logic() {
     assert_eq!(filtered.children.len(), 1);
     assert_eq!(filtered.children[0].name, "large.rs");
 }
+
+// ====================================================================
+// Test (plan): should format as JSONL when OutputFormat::Jsonl
+// ====================================================================
+#[test]
+fn should_format_as_jsonl() {
+    let child_a = make_node("a.txt", 100);
+    let child_b = make_node("b.txt", 200);
+    let root = make_dir("src", vec![child_a, child_b]);
+    let jsonl = root.format(OutputFormat::Jsonl).unwrap();
+
+    let lines: Vec<&str> = jsonl.lines().collect();
+    // One JSON object per node (root + 2 children = 3 lines)
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].contains("\"name\":\"src\""));
+    assert!(lines[0].contains("\"is_dir\":true"));
+    assert!(lines[1].contains("\"name\":\"a.txt\""));
+    assert!(lines[1].contains("\"size\":100"));
+    assert!(lines[2].contains("\"name\":\"b.txt\""));
+    assert!(lines[2].contains("\"size\":200"));
+    // Each line must be valid JSON-ish (starts with '{', ends with '}')
+    for line in &lines {
+        assert!(line.starts_with('{'), "line should start with '{{': {}", line);
+        assert!(line.ends_with('}'), "line should end with '}}': {}", line);
+    }
+}
+
+// ====================================================================
+// Test (plan): should format as tree when OutputFormat::Tree
+// ====================================================================
+#[test]
+fn should_format_as_tree() {
+    let child_a = make_node("alpha.txt", 1024);
+    let child_b = make_node("beta.txt", 2_097_152);
+    let sub = make_dir("sub", vec![make_node("deep.txt", 512)]);
+    let root = make_dir("root", vec![child_a, child_b, sub]);
+    let tree = root.format(OutputFormat::Tree).unwrap();
+
+    // Root appears on first line with its total size
+    let lines: Vec<&str> = tree.lines().collect();
+    assert!(lines[0].starts_with("root"));
+    assert!(lines[0].contains("KB") || lines[0].contains("MB") || lines[0].contains("B"));
+
+    // Children are indented
+    assert!(lines.iter().any(|l| l.contains("alpha.txt")));
+    assert!(lines.iter().any(|l| l.contains("beta.txt")));
+
+    // Subdirectory and its child are further indented
+    let deep_line = lines.iter().find(|l| l.contains("deep.txt")).unwrap();
+    assert!(deep_line.starts_with("    ")); // 2 levels deep = 4 spaces
+}

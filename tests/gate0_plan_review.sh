@@ -29,11 +29,8 @@ if [ ! -f "$GUIDELINES_FILE" ]; then
   exit 1
 fi
 
-# Load OpenRouter key
-if [ -f "$PROJ_ROOT/.env" ]; then
-  set -a; . "$PROJ_ROOT/.env"; set +a
-fi
-CRITIC_MODEL="mimo-v2.5-pro"
+# Load OpenRouter key (second .env load removed — already loaded at line 15)
+CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-mimo-v2.5-pro}"
 CRITIC_URL="https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 CRITIC_API_KEY="${XIAOMI_API_KEY:-}"
 if [ -z "$CRITIC_API_KEY" ]; then

@@ -154,6 +154,9 @@ fn should_use_cache_on_second_scan() {
     let tree1 = inc.scan(dir.path(), &opts).unwrap();
     assert_eq!(tree1.file_count(), 4);
 
+    // Drop scanner + cache to release the redb lock before reopening.
+    drop(inc);
+
     // Re-open cache from same path to verify persistence.
     let cache2 = RedbCache::open(&cache_path).unwrap();
     let inc2 = IncrementalScanner::new(ScanOptions::default(), cache2);
@@ -181,6 +184,9 @@ fn incremental_scan_returns_full_tree_when_unchanged() {
     let tree1 = inc.scan(dir.path(), &opts).unwrap();
     let count1 = tree1.file_count();
     let size1 = tree1.total_size();
+
+    // Drop scanner + cache to release the redb lock before reopening.
+    drop(inc);
 
     // Second scan (no changes) should return identical tree.
     let cache2 = RedbCache::open(&cache_path).unwrap();

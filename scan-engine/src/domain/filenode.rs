@@ -9,11 +9,17 @@ use super::sort::SortKey;
 /// A node in the file tree: either a file or a directory with children.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileNode {
+    /// Absolute path on the filesystem.
     pub path: PathBuf,
+    /// File or directory name (not the full path).
     pub name: String,
+    /// Size of this node in bytes (0 for directories whose size is the sum of children).
     pub size: u64,
+    /// Modification time as a Unix timestamp (seconds since epoch).
     pub mtime: u64,
+    /// Child nodes (empty for files).
     pub children: Vec<FileNode>,
+    /// Whether this node is a directory.
     pub is_dir: bool,
 }
 
@@ -75,6 +81,7 @@ impl FileNode {
         }
     }
 
+    /// Returns `true` when this node satisfies every filter in `filters` (AND logic).
     pub fn matches_filters(&self, filters: &[Filter]) -> bool {
         filters.iter().all(|f| self.matches_filter(f))
     }
@@ -102,10 +109,10 @@ impl FileNode {
     pub fn sort(&self, key: SortKey) -> Self {
         let mut node = self.clone();
         match key {
-            SortKey::SizeDesc  => node.children.sort_by(|a, b| b.total_size().cmp(&a.total_size())),
-            SortKey::SizeAsc   => node.children.sort_by(|a, b| a.total_size().cmp(&b.total_size())),
-            SortKey::NameAsc   => node.children.sort_by(|a, b| a.name.cmp(&b.name)),
-            SortKey::NameDesc  => node.children.sort_by(|a, b| b.name.cmp(&a.name)),
+            SortKey::SizeDesc => node.children.sort_by_key(|a| std::cmp::Reverse(a.total_size())),
+            SortKey::SizeAsc  => node.children.sort_by_key(|a| a.total_size()),
+            SortKey::NameAsc  => node.children.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortKey::NameDesc => node.children.sort_by(|a, b| b.name.cmp(&a.name)),
         }
         for child in &mut node.children {
             *child = child.sort(key);

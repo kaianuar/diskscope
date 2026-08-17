@@ -404,7 +404,7 @@ for PHASE in "${PHASES[@]}"; do
         # Fallback: no deliverables found, use monolithic call
         echo "==> [phase] implementing (monolithic): ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "monolithic (no deliverables extracted)"
-        run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."
+        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."; set -e
       elif [ "${#deliverables[@]}" -le "$MAX_SUBCHUNKS" ]; then
         echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
         log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
@@ -415,7 +415,7 @@ for PHASE in "${PHASES[@]}"; do
           desc=$(echo "$d" | sed 's/`[^`]*`[[:space:]]*--[[:space:]]*//')
           echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
           log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
-          run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."
+          set +e; run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."; set -e
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
       else
@@ -423,13 +423,15 @@ for PHASE in "${PHASES[@]}"; do
         dl_list=$(printf '  - %s\n' "${deliverables[@]}")
         echo "==> [phase] implementing ${#deliverables[@]} deliverables (batched) for ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "batched: ${#deliverables[@]} deliverables"
-        run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} Do NOT edit plan.md. Do not implement future phases."
+        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} Do NOT edit plan.md. Do not implement future phases."; set -e
       fi
     else
       FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"
       [ -z "$FIX_SRC" ] && FIX_SRC="$(cat "${RUNLOG:-}" 2>/dev/null)"
       echo "==> [phase] revising code for reviewer/test findings..."
+      set +e
       run_omp "Your code for phase '${PHASE}' was reviewed and needs fixing. Fix ONLY the failing code/tests for THIS phase; do not touch later phases or edit plan.md. Findings:\n${FIX_SRC}"
+      set -e
     fi
 
     # GATE 1: tests for this phase.
