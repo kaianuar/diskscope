@@ -227,6 +227,10 @@ SEVERITY DISCIPLINE — this is the SINGLE most important rule for keeping the r
   rounds. Re-raising the same item you already flagged is a review defect.
 - Genuine P1 (blocking) examples: a requirement is unaddressed, a security hole, a contradiction
   that would break implementation, an impossible design (e.g. REST SDK used where realtime is required).
+- HARD RULE: if every P0/P1 you identified is a "missing declaration", "add justification", "be more
+  explicit", an edition/platform-not-declared note, or any completeness/writing concern (NOT a concrete
+  build/requirement-break defect), then your verdict MUST be PASS. Those are P2/P3, they do not block,
+  and FAILing on them alone is a review defect that wastes the 5-round budget.
 
 ACTIONABLE FEEDBACK — every P0/P1 finding MUST end with a concrete remediation on its own line:
   `-> FIX: <exactly what the builder should write/add/change, with specific detail>`
@@ -314,12 +318,20 @@ if [ $CURL_EC -ne 0 ]; then
   exit 1
 fi
 
-# Parse response — handle reasoning models that put output in message.reasoning
+# Parse response — handle reasoning models that put output in message.reasoning.
+# OpenCode Go can return TWO JSON docs concatenated (a chat completion + trailing
+# extras). Parse the FIRST complete JSON object by trying each '}' as the end.
 node -e "
 const fs = require('fs');
-let d;
-try { d = JSON.parse(fs.readFileSync('/tmp/gate0_response.json', 'utf8')); }
-catch(e) { console.log('RESPONSE-ERROR: ' + e.message); process.exit(1); }
+const raw = fs.readFileSync('/tmp/gate0_response.json', 'utf8');
+let d = null, parsed = false;
+if (raw.trim().startsWith('{')) {
+  for (let i = raw.indexOf('}'); i < raw.length; i = raw.indexOf('}', i + 1)) {
+    try { d = JSON.parse(raw.slice(0, i + 1)); parsed = true; break; } catch(e) {}
+  }
+}
+if (!parsed) { try { d = JSON.parse(raw); parsed = true; } catch(e) {} }
+if (!parsed) { console.log('RESPONSE-ERROR: could not parse response JSON'); process.exit(1); }
 if (d.error) { console.log('API-ERROR: ' + JSON.stringify(d.error)); process.exit(1); }
 const msg = d.choices?.[0]?.message || {};
 const content = msg.content || msg.reasoning || '';
