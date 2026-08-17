@@ -19,7 +19,7 @@ set -uo pipefail
 PROJ_ROOT="$(pwd)"
 
 DIFF_FILE="${1:-/tmp/review.diff}"
-CRITIC_MODEL="${CRITIC_MODEL:-z-ai/glm-5.2}"        # OpenRouter model id
+CRITIC_MODEL="${CRITIC_MODEL:-kimi-k2.7-code}"     # OpenCode Go model id (OpenAI-compatible)
 CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-300}"             # seconds; large diffs need headroom
 CRITIC_MAX_TOKENS="${CRITIC_MAX_TOKENS:-16000}"     # high: reasoning models burn tokens thinking and return empty if too low
 CRITIC_STANDARD="${CRITIC_STANDARD:-production}"    # production | mvp
@@ -31,12 +31,12 @@ REVIEW_HISTORY_FILE="${REVIEW_HISTORY_FILE:-/tmp/review_history.txt}"
 # status. The critic reads it each round and re-flags ONLY OPEN items, breaking
 # the "re-raise forever" deadlock. Cleared by the pipeline at phase start.
 REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}"
-OPENROUTER_URL="https://openrouter.ai/api/v1/chat/completions"
+CRITIC_URL="${CRITIC_URL:-https://opencode.ai/zen/go/v1/chat/completions}"
 
 echo "==> GATE 2: adversarial review (critic=${CRITIC_MODEL}, standard=${CRITIC_STANDARD}, timeout=${CRITIC_TIMEOUT}s, max_tokens=${CRITIC_MAX_TOKENS})"
 
 # Load the project's .env — the ONLY env this pipeline reads (per project setup:
-# keys live in the repo's .env, not in Hermes's file). This puts OPENROUTER_API_KEY
+# keys live in the repo's .env, not in Hermes's file). This puts OPENCODE_GO_API_KEY
 # etc. into scope whether run via run-gates.sh or directly in omp.
 if [ -f "$PROJ_ROOT/.env" ]; then
   set -a; # shellcheck disable=SC1091
@@ -44,15 +44,15 @@ if [ -f "$PROJ_ROOT/.env" ]; then
   set +a
 fi
 
-# OpenRouter key — read from the environment (which we just loaded from .env).
-# Do NOT fall back to ~/.hermes/.env: a cloned repo sets up OpenRouter in the
-# project's .env, not in Hermes's file.
-OR_KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "$OR_KEY" ]; then
-  echo "xx OPENROUTER_API_KEY not set. Add it to $PROJ_ROOT/.env (the project .env this pipeline reads)."
+# OpenCode Go key — read from the environment (which we just loaded from .env).
+# Do NOT fall back to ~/.hermes/.env: a cloned repo sets up its provider key in
+# the project's .env, not in Hermes's file.
+CRITIC_API_KEY="${OPENCODE_GO_API_KEY:-${CRITIC_API_KEY:-}}"
+if [ -z "$CRITIC_API_KEY" ]; then
+  echo "xx OPENCODE_GO_API_KEY not set. Add it to $PROJ_ROOT/.env with the OpenCode Go key."
   exit 1
 fi
-[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using OPENROUTER_API_KEY from the environment"
+[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using OPENCODE_GO_API_KEY from the environment"
 
 if [ ! -s "$DIFF_FILE" ]; then
   echo "!! No diff (${DIFF_FILE} empty). Pass a path to the diff."
@@ -170,16 +170,17 @@ process.stdout.write(JSON.stringify({
   model,
   messages:[{role:'user',content:prompt}],
   max_tokens:Number(maxTokens||16000),
-  temperature:0.2
+  // OpenCode Go reasoning models (kimi-k2.7-code) only accept temperature=1.
+  temperature:1
 }));
 NODE
 
 echo "Request bytes: $(wc -c < /tmp/review_request.json)"
 
-# POST to OpenRouter with an explicit generous timeout.
+# POST to the critic endpoint (OpenCode Go) with an explicit generous timeout.
 curl -sS --max-time "${CRITIC_TIMEOUT}" \
-  -X POST "$OPENROUTER_URL" \
-  -H "Authorization: Bearer ${OR_KEY}" \
+  -X POST "$CRITIC_URL" \
+  -H "Authorization: Bearer ${CRITIC_API_KEY}" \
   -H "Content-Type: application/json" \
   -H "HTTP-Referer: http://localhost" \
   -H "X-Title: omp-agent" \

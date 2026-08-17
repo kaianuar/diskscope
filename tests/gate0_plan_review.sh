@@ -33,13 +33,15 @@ fi
 if [ -f "$PROJ_ROOT/.env" ]; then
   set -a; . "$PROJ_ROOT/.env"; set +a
 fi
-OR_KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "$OR_KEY" ]; then
-  echo "xx OPENROUTER_API_KEY not set. Add to .env"
+CRITIC_MODEL="kimi-k2.7-code"
+CRITIC_URL="https://opencode.ai/zen/go/v1/chat/completions"
+CRITIC_API_KEY="${OPENCODE_GO_API_KEY:-}"
+if [ -z "$CRITIC_API_KEY" ]; then
+  echo "xx OPENCODE_GO_API_KEY not set. Add to .env (OpenCode Go key)"
   exit 1
 fi
 
-echo "==> GATE 0: Plan Review (critic=z-ai/glm-5.2)"
+echo "==> GATE 0: Plan Review (critic=${CRITIC_MODEL})"
 echo "Plan: $PLAN_FILE"
 
 # Load plan and guidelines
@@ -66,7 +68,7 @@ if [ -f "$HISTORY_FILE" ]; then
   HISTORY_TXT=$(tail -c 6000 "$HISTORY_FILE" 2>/dev/null || echo "")
 fi
 
-echo "==> GATE 0: Plan Review (critic=z-ai/glm-5.2)"
+echo "==> GATE 0: Plan Review (critic=${CRITIC_MODEL})"
 
 # Build the critic prompt with architecture validation focus
 cat > /tmp/gate0_prompt.txt <<'PROMPT_EOF'
@@ -255,20 +257,20 @@ cat > /tmp/build_request.js << 'NODEEOF'
 const fs = require('fs');
 const prompt = fs.readFileSync('/tmp/gate0_prompt_final.txt', 'utf8');
 const payload = {
-  model: 'z-ai/glm-5.2',
+  model: 'kimi-k2.7-code',
   messages: [{ role: 'user', content: prompt }],
   max_tokens: 64000,
-  temperature: 0.2
+  temperature: 1   // OpenCode Go reasoning models require temperature=1
 };
 fs.writeFileSync('/tmp/gate0_request.json', JSON.stringify(payload, null, 2));
 NODEEOF
 
 node /tmp/build_request.js
 
-# POST to OpenRouter
+# POST to the critic endpoint (OpenCode Go)
 curl -sS --max-time 600 \
-  -X POST "https://openrouter.ai/api/v1/chat/completions" \
-  -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+  -X POST "${CRITIC_URL}" \
+  -H "Authorization: Bearer ${CRITIC_API_KEY}" \
   -H "Content-Type: application/json" \
   -H "HTTP-Referer: http://localhost" \
   -H "X-Title: omp-agent-gate0" \

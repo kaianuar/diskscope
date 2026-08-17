@@ -375,7 +375,7 @@ for PHASE in "${PHASES[@]}"; do
       break
     fi
     set +e
-    REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" CRITIC_MODEL="${CRITIC_MODEL:-z-ai/glm-5.2}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
+    REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}" CRITIC_MODEL="${CRITIC_MODEL:-kimi-k2.7-code}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
     C_EC=${PIPESTATUS[0]}
     set -e
     if [ "$C_EC" -eq 0 ]; then

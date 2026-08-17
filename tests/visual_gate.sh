@@ -26,7 +26,7 @@ set -uo pipefail
 cd "${GATE3_CWD:-$(pwd)}"
 
 GATE3_START="${GATE3_START:-}"              # command to start the app (required)
-VISION_MODEL="${GOOGLE_VISION_MODEL:-google/gemini-3.1-flash-lite}"
+VISION_MODEL="${GOOGLE_VISION_MODEL:-mimo-v2-omni}"      # vision model (OpenCode Go, multimodal)
 VISION_TIMEOUT="${VISION_TIMEOUT:-180}"
 SHOTS_DIR="${GATE3_SHOTS:-/tmp/gate3_shots}"
 SPEC_DIR="${GATE3_SPEC:-tests/e2e}"
@@ -87,9 +87,9 @@ if ls "$SHOTS_DIR"/*.png >/dev/null 2>&1; then
 const fs=require('fs'), path=require('path'), os=require('os');
 const [ , , shotsDir, model, vtimeout]=process.argv;
 const pngs=fs.readdirSync(shotsDir).filter(f=>f.endsWith('.png')).map(f=>path.join(shotsDir,f));
-let key=process.env.OPENROUTER_API_KEY||'';
+let key=process.env.OPENCODE_GO_API_KEY||'';
 if(!key){ const p=os.homedir()+'/.hermes/.env'; if(fs.existsSync(p)){
-  const l=fs.readFileSync(p,'utf8').split('\n').find(l=>l.startsWith('OPENROUTER_API_KEY='));
+  const l=fs.readFileSync(p,'utf8').split('\n').find(l=>l.startsWith('OPENCODE_GO_API_KEY='));
   if(l) key=l.split('=')[1].trim().replace(/^"|"$/g,''); } }
 if(!key){ console.log('NO_KEY'); process.exit(2); }
 (async()=>{
@@ -98,7 +98,7 @@ if(!key){ console.log('NO_KEY'); process.exit(2); }
   const body={model,messages:[{role:'user',content:parts}],max_tokens:700};
   const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(), Number(vtimeout||180)*1000);
   try{
-    const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',
+    const r=await fetch('https://opencode.ai/zen/go/v1/chat/completions',{method:'POST',
       headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','HTTP-Referer':'http://localhost','X-Title':'omp-agent'},
       body:JSON.stringify(body),signal:ctrl.signal});
     const j=await r.json();
