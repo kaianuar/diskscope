@@ -67,6 +67,92 @@ present_outstanding_notes() {
   fi
 }
 
+# ---- docker pre-flight: build a per-project toolchain image so tests run in a
+# reproducible container with all native build deps (dbus, gtk, webkit2gtk...)
+# installed via a Dockerfile. Kills the "missing system library" blocker class.
+# Non-fatal if docker is unavailable or the project opts out (ENV_DOCKER=0).
+docker_preflight() {
+  local proj_img=""
+  [ -f Cargo.toml ] || [ -f package.json ] || [ -f pyproject.toml ] || [ -f go.mod ] || return 0 # nothing to run
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "==> [docker] 'docker' not found - running gates on host (system deps must be present)."
+    return 0
+  fi
+  if docker info >/dev/null 2>&1; then :; else
+    echo "==> [docker] docker daemon not reachable - running gates on host."
+    return 0
+  fi
+
+  # Detect RUNTIME (a small, stable set) and write a Dockerfile from it. The
+  # image's install steps come from the project's OWN manifests (npm ci, cargo
+  # build, pip install, composer install), so Next.js/Nuxt/React all resolve to a
+  # Node base and pull exactly what the project declares. For stacks needing
+  # unusual native libs, the builder supplies/revises a Dockerfile via plan review
+  # and this preflight builds THAT file instead.
+  if [ ! -f Dockerfile ]; then
+    if [ -f Cargo.toml ]; then
+      base="rust:latest"; apt="pkg-config build-essential"
+      # Tauri/GUI crates (+ other C libs) need system dev packages. Detect these
+      # from the crate graphs so a Rust GUI project gets its native deps.
+      local native=""
+      if grep -rqE "tauri|egui|gtk|webkit|openssl|sqlite|postgres|mysql" Cargo.toml crates/*/Cargo.toml 2>/dev/null; then
+        native="libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libglib2.0-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libssl-dev libsqlite3-dev"
+      fi
+      cat > Dockerfile <<EOF
+FROM ${base}
+RUN apt-get update && apt-get install -y --no-install-recommends ${apt} ${native} \\
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+# deps are fetched at run time by the pipeline (cargo build) using the project's Cargo.lock
+EOF
+      echo "==> [docker] wrote Dockerfile (Rust runtime${native:+ +native deps})."
+    elif [ -f package.json ]; then
+      cat > Dockerfile <<'EOF'
+FROM node:24-bookworm-slim
+WORKDIR /app
+ENV CI=true
+# run: npm ci && npm test (project's own lockfile + scripts)
+EOF
+      echo "==> [docker] wrote Dockerfile (Node runtime - covers React/Next.js/Nuxt/Vue)."
+    elif [ -f composer.json ]; then
+      cat > Dockerfile <<'EOF'
+FROM composer:2
+WORKDIR /app
+# run: composer install --no-interaction (project's own composer.lock)
+EOF
+      echo "==> [docker] wrote Dockerfile (PHP/Composer runtime - covers LAMP)."
+    elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+      cat > Dockerfile <<'EOF'
+FROM python:3.12-slim
+WORKDIR /app
+# run: pip install -r requirements.txt || pip install -e .  (project's own deps)
+EOF
+      echo "==> [docker] wrote Dockerfile (Python runtime)."
+    elif [ -f go.mod ]; then
+      cat > Dockerfile <<'EOF'
+FROM golang:latest
+WORKDIR /app
+# run: go test ./...  (project's own go.mod)
+EOF
+      echo "==> [docker] wrote Dockerfile (Go runtime)."
+    else
+      echo "==> [docker] no recognized language manifest; running gates on host."
+      return 0
+    fi
+  fi
+
+  # Image name = omp-env:<project> (stable per project). Build if not present.
+  proj_img="omp-env:$([ -f Dockerfile ] && basename "$(dirname "$(pwd)")")"
+  echo "==> [docker] ensuring build image ${proj_img}... (use DOCKER_BUILDKIT=0 if BuildKit missing)"
+  if docker image inspect "$proj_img" >/dev/null 2>&1; then
+    : # cached
+  else
+    DOCKER_BUILDKIT=0 docker build -q -t "$proj_img" . 2>&1 | tail -2 || proj_img=""
+  fi
+  export OMP_DOCKER_IMAGE="$proj_img"
+  [ -n "$proj_img" ] && echo "==> [docker] gates will run in ${proj_img}."
+}
+
 # ---- safe runner: bounded omp call so the pipeline never hangs on --print ----
 run_omp() { # prompt...  (extra positional args are the task text)
   local task="${1:-}"
@@ -149,6 +235,10 @@ fi
 # Start a fresh outstanding-notes file for this run (cleared so P2/P3/P4 findings
 # don't leak in from a previous run).
 rm -f "${REVIEW_NOTES_FILE}"
+
+# Docker pre-flight: build/refresh the per-project toolchain image so gates run
+# in a reproducible container. Non-fatal if docker is unavailable.
+docker_preflight
 
 # ============================================================================
 # PHASE 0 — PLAN (planning only: builder may touch ONLY plan.md)
@@ -257,6 +347,10 @@ for PHASE in "${PHASES[@]}"; do
     fi
 
     # GATE 1: tests for this phase.
+    # Ensure the project's toolchain image exists (builder has now scaffolded the
+    # code + manifests, so the stack is known). Cached thereafter; gate.sh runs tests
+    # inside the container, removing host system-lib blockers (dbus/gtk/etc).
+    docker_preflight
     rm -f "${FINDINGS_FILE}"
     set +e
     bash "$PROJ_ROOT/tests/gate.sh" 2>&1 | tee "${RUNLOG}"
