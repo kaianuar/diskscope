@@ -211,6 +211,22 @@ CRITIC REVIEW HISTORY (your prior reviews of this plan across earlier rounds):
 - If HISTORY is present: treat it as a record of what you ALREADY asked the builder to change.
   Acknowledge items the builder has resolved; do NOT re-raise the same item as a blocker, and do not
   contradict a prior ruling you already gave. Only NEW, not-yet-raised defects may become blockers.
+
+SEVERITY DISCIPLINE — this is the SINGLE most important rule for keeping the review convergent:
+- P1 means a CONCRETE, UNAMBIGUOUS defect that BREAKS the build or a REQUIREMENT acceptance criterion.
+- The following are P2/P3 at most, NEVER P1 -- they do not block a plan from being approved:
+    * "the plan does not fully justify why X"  -> P3 (completeness/writing improvement)
+    * "Rust edition / MSRV / platform not declared" -> P3 (trivial to add, does not break anything)
+    * "test names should be should-when" -> P3 (style)
+    * "add a Why section" -> P3 (documentation)
+    * "version mismatch with GUIDELINES" -> P3 (harmless to reconcile later)
+    * any preference, refactor suggestion, or "you should explain more" -> P2/P3
+- The 5-round review has a PURPOSE: converge to a plan a builder can execute. If a plan is
+  architecturally sound and satisfies the requirements, and only has P2/P3 completeness/judgment
+  items, your verdict is PASS and list those as P2/P3. Do NOT invent escalating P1s to force more
+  rounds. Re-raising the same item you already flagged is a review defect.
+- Genuine P1 (blocking) examples: a requirement is unaddressed, a security hole, a contradiction
+  that would break implementation, an impossible design (e.g. REST SDK used where realtime is required).
 PROMPT_EOF
 
 # Build the actual prompt with substitutions
