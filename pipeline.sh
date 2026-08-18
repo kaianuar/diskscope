@@ -347,6 +347,13 @@ while [ "$plan_round" -lt "$MAX_PLAN_ROUNDS" ]; do
     echo "==> [plan] PLAN APPROVED. Proceeding to phased build."
     break
   fi
+  # If verdict is empty (API returned nothing), skip revision — the builder
+  # can't improve with empty feedback. The next loop iteration re-runs gate0.
+  if [ ! -s "${GATE0_VERDICT:-/dev/null}" ] || ! grep -qiE 'PASS|FAIL|\[P[0-4]\]' "${GATE0_VERDICT:-/dev/null}" 2>/dev/null; then
+    log_int "PLAN" "CRITIC" "r${plan_round}" "REJECTED - empty verdict (API issue), skipping revision"
+    echo "==> [plan] empty verdict from critic (API issue), retrying..."
+    continue
+  fi
   echo "==> [plan] plan rejected (round ${plan_round}); feeding findings back."
   log_int "PLAN" "CRITIC" "r${plan_round}" "REJECTED - findings fed to builder"
 done
