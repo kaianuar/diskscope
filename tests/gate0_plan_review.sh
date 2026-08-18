@@ -285,7 +285,7 @@ with open('/tmp/gate0_prompt_final.txt', 'w') as f:
 "
 
 # Build JSON request using node
-cat > /tmp/build_request.js << 'NODEEOF'
+cat > /tmp/build_request.js << NODEEOF
 const fs = require('fs');
 const prompt = fs.readFileSync('/tmp/gate0_prompt_final.txt', 'utf8');
 const payload = {
