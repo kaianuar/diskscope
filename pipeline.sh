@@ -435,7 +435,7 @@ for PHASE in "${PHASES[@]}"; do
         for i in "${!deliverables[@]}"; do
           d="${deliverables[$i]}"
           # Extract file path from backtick-quoted name (e.g. "`foo/bar.rs` -- desc" -> "foo/bar.rs")
-          file_hint=$(echo "$d" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+          file_hint=$(echo "$d" | grep -oE '`[^`]+`' | head -1 | tr -d '`' || true)
           desc=$(echo "$d" | sed 's/`[^`]*`[[:space:]]*--[[:space:]]*//')
           echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
           log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
