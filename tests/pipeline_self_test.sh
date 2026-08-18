@@ -119,6 +119,21 @@ echo "$d1" | grep -q 'domain.rs' && ! echo "$d1" | grep -q 'Gate' && ok "Phase1:
 echo "$d2" | grep -q 'scanner.rs' && ! echo "$d2" | grep -q 'Gate' && ok "Phase2: deliverables extracted, no Gate lines" || no "Phase2 deliverables: [$d2]"
 
 # =============================================================================
+# 1d. REGRESSION: file_hint grep with no-backtick deliverable (must not exit 1)
+# =============================================================================
+note ""
+note "## 1d. regression: file_hint grep no-backtick"
+# This is the exact bug that killed builds: grep -oE returns exit 1 when the
+# input has no backticks, and set -e kills the pipeline.
+no_bt="Integrate the trash port with the trash crate"
+hint=$(echo "$no_bt" | grep -oE '`[^`]+`' | head -1 | tr -d '`' || true)
+[ -z "$hint" ] && ok "no-backtick deliverable: grep returns empty (not exit 1)" || no "file_hint should be empty: [$hint]"
+
+with_bt='`scan-engine/src/trash.rs` — TrashAdapter impl'
+hint2=$(echo "$with_bt" | grep -oE '`[^`]+`' | head -1 | tr -d '`' || true)
+[ "$hint2" = "scan-engine/src/trash.rs" ] && ok "backtick deliverable: file_hint extracted" || no "file_hint wrong: [$hint2]"
+
+# =============================================================================
 # 2. Verdict parsing: last bare PASS/FAIL token determines gate outcome.
 # =============================================================================
 note ""

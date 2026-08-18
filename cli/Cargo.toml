@@ -1,9 +1,5 @@
 [package]
-name = "diskscope-cli"
+name = "cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[[bin]]
-name = "diskscope"
-path = "src/main.rs"

@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "diskscope-cli"
+name = "cli"
 version = "0.1.0"
 
 [[package]]
