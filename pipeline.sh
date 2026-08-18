@@ -176,10 +176,27 @@ run_omp() { # prompt...  (extra positional args are the task text)
   if [ -n "$task" ]; then
     omp_call+=( "$task" )
   fi
+  local start_time
+  start_time=$(date +%s)
+  log_int "OMP" "START" "$(date +%H:%M:%S)" "omp call: $(echo "$task" | head -c 80)..."
   timeout "${OMP_TIMEOUT:-1200}" "${omp_call[@]}"
   local rc=$?
+  local end_time
+  end_time=$(date +%s)
+  local elapsed=$((end_time - start_time))
+  log_int "OMP" "EXIT" "$(date +%H:%M:%S)" "omp exit=${rc} elapsed=${elapsed}s"
   if [ "$rc" -eq 124 ]; then
-    echo "xx [pipeline] omp timed out (${OMP_TIMEOUT:-1200}s). Marking as incomplete." >&2
+    echo "xx [pipeline] omp timed out (${OMP_TIMEOUT:-1200}s, ${elapsed}s elapsed). Marking as incomplete." >&2
+  elif [ "$rc" -ne 0 ]; then
+    # Log diagnostic info on non-zero exit (signal, OOM, resource limits)
+    local oom_score
+    oom_score=$(cat /proc/self/oom_score 2>/dev/null || echo "?")
+    local rss_kb
+    rss_kb=$(awk '/VmRSS/{print $2}' /proc/self/status 2>/dev/null || echo "?")
+    local procs
+    procs=$(ps aux | wc -l)
+    echo "xx [pipeline] omp exited rc=${rc} after ${elapsed}s (rss=${rss_kb}KB, oom_score=${oom_score}, procs=${procs})" >&2
+    log_int "OMP" "FAIL" "$(date +%H:%M:%S)" "exit=${rc} elapsed=${elapsed}s rss=${rss_kb}KB oom=${oom_score} procs=${procs}"
   fi
   return "$rc"
 }
