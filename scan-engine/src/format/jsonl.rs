@@ -30,6 +30,7 @@ fn collect_lines(node: &TreeNode, depth: u32, out: &mut String) {
         match node.entry.node_type {
             NodeType::Dir => "dir",
             NodeType::File => "file",
+            NodeType::Symlink => "symlink",
         }
     ));
     out.push_str(&format!("\"depth\":{}", depth));

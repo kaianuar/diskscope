@@ -55,6 +55,7 @@ fn collect_rows(
     let raw_name = node.entry.name.clone();
     let typ = match node.entry.node_type {
         NodeType::Dir => "dir".to_string(),
+        NodeType::Symlink => "symlink".to_string(),
         NodeType::File => node
             .entry
             .path

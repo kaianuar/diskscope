@@ -41,6 +41,7 @@ fn format_node(node: &TreeNode, out: &mut String, indent: usize) {
         match node.entry.node_type {
             NodeType::Dir => "dir",
             NodeType::File => "file",
+            NodeType::Symlink => "symlink",
         }
     ));
 

@@ -33,7 +33,7 @@ impl Filter {
 
         let children_size: u64 = filtered_children.iter().map(|c| c.total_size).sum();
         let total_size = match node.entry.node_type {
-            NodeType::File => node.entry.size,
+            NodeType::File | NodeType::Symlink => node.entry.size,
             NodeType::Dir => children_size,
         };
 

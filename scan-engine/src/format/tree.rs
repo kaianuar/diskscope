@@ -6,7 +6,7 @@ pub fn format(result: &ScanResult) -> String {
     // Root node — no connector.
     let suffix = match result.root.entry.node_type {
         NodeType::Dir => "/",
-        NodeType::File => "",
+        NodeType::File | NodeType::Symlink => "",
     };
     out.push_str(&format!(
         "{}{}  [{}]\n",
@@ -28,7 +28,7 @@ fn render_child(node: &TreeNode, prefix: &str, is_last: bool, out: &mut String) 
     let connector = if is_last { "└── " } else { "├── " };
     let suffix = match node.entry.node_type {
         NodeType::Dir => "/",
-        NodeType::File => "",
+        NodeType::File | NodeType::Symlink => "",
     };
 
     out.push_str(prefix);

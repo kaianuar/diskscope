@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::CachedEntry;
 
@@ -38,24 +38,42 @@ impl RedbCache {
         match table.get(key.as_str()) {
             Ok(Some(guard)) => {
                 let bytes = guard.value();
-                // Store: size(8) + mtime(8) + scan_time(8) = 24 bytes
-                if bytes.len() < 16 {
-                    return Ok(None);
+                // Store: size(8) + mtime(8) + scan_time(8) + node_type(1) = 25 bytes
+                if bytes.len() < 25 {
+                    // Legacy format: size(8) + mtime(8) = 16 bytes
+                    if bytes.len() < 16 {
+                        return Ok(None);
+                    }
+                    let size = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+                    let modified = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+                    return Ok(Some(CachedEntry {
+                        entry: crate::FileEntry {
+                            path: path.to_path_buf(),
+                            name: String::new(),
+                            size,
+                            modified,
+                            node_type: crate::NodeType::File,
+                            depth: 0,
+                        },
+                        scan_time: 0,
+                    }));
                 }
                 let size = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
                 let modified = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-                let scan_time = if bytes.len() >= 24 {
-                    u64::from_le_bytes(bytes[16..24].try_into().unwrap())
-                } else {
-                    0
+                let scan_time = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+                let node_type = match bytes[24] {
+                    0 => crate::NodeType::File,
+                    1 => crate::NodeType::Dir,
+                    2 => crate::NodeType::Symlink,
+                    _ => crate::NodeType::File,
                 };
                 Ok(Some(CachedEntry {
                     entry: crate::FileEntry {
                         path: path.to_path_buf(),
-                        name: String::new(), // caller fills in
+                        name: String::new(),
                         size,
                         modified,
-                        node_type: crate::NodeType::File,
+                        node_type,
                         depth: 0,
                     },
                     scan_time,
@@ -69,10 +87,15 @@ impl RedbCache {
     /// Store a cached entry keyed by canonical path.
     pub fn put(&self, path: &Path, entry: &CachedEntry) -> Result<(), std::io::Error> {
         let key = Self::canonical_key(path);
-        let mut val = [0u8; 24];
+        let mut val = [0u8; 25];
         val[0..8].copy_from_slice(&entry.entry.size.to_le_bytes());
         val[8..16].copy_from_slice(&entry.entry.modified.to_le_bytes());
         val[16..24].copy_from_slice(&entry.scan_time.to_le_bytes());
+        val[24] = match entry.entry.node_type {
+            crate::NodeType::File => 0,
+            crate::NodeType::Dir => 1,
+            crate::NodeType::Symlink => 2,
+        };
         let txn = self
             .db
             .begin_write()
@@ -88,6 +111,65 @@ impl RedbCache {
         txn
             .commit()
             .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+
+    /// Return all cached entries whose path is under `dir` (exclusive of `dir` itself).
+    pub fn entries_under(&self, dir: &Path) -> Result<Vec<CachedEntry>, std::io::Error> {
+        let prefix = Self::canonical_key(dir);
+        let prefix = if prefix.ends_with('/') {
+            prefix
+        } else {
+            format!("{prefix}/")
+        };
+
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let table = match txn.open_table(TABLE) {
+            Ok(t) => t,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut results = Vec::new();
+        let iter = table
+            .iter()
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+        for row in iter {
+            let row = row.map_err(|e| std::io::Error::other(e.to_string()))?;
+            let key = row.0.value();
+            if !key.starts_with(prefix.as_str()) || key == prefix.trim_end_matches('/') {
+                continue;
+            }
+            let val = row.1.value();
+            if val.len() < 25 {
+                continue;
+            }
+            let path = std::path::PathBuf::from(key);
+            let size = u64::from_le_bytes(val[0..8].try_into().unwrap());
+            let modified = u64::from_le_bytes(val[8..16].try_into().unwrap());
+            let scan_time = u64::from_le_bytes(val[16..24].try_into().unwrap());
+            let node_type = match val[24] {
+                0 => crate::NodeType::File,
+                1 => crate::NodeType::Dir,
+                2 => crate::NodeType::Symlink,
+                _ => crate::NodeType::File,
+            };
+            results.push(CachedEntry {
+                entry: crate::FileEntry {
+                    path,
+                    name: String::new(),
+                    size,
+                    modified,
+                    node_type,
+                    depth: 0,
+                },
+                scan_time,
+            });
+        }
+
+        Ok(results)
     }
 
     fn canonical_key(path: &Path) -> String {

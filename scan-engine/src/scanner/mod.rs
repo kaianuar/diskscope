@@ -10,12 +10,15 @@ use crate::{ScanError, ScanOptions, ScanResult};
 pub use cache::RedbCache;
 pub use incremental::IncrementalScanner;
 
-/// Parallel directory scanner.
-pub struct Scanner {
+/// Backward-compatible alias for [`DirectScanner`].
+pub type Scanner = DirectScanner;
+
+/// Parallel directory scanner (legacy API — takes ScanOptions, root at scan time).
+pub struct DirectScanner {
     options: ScanOptions,
 }
 
-impl Scanner {
+impl DirectScanner {
     pub fn new(options: ScanOptions) -> Self {
         Self { options }
     }

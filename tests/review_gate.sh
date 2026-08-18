@@ -156,8 +156,11 @@ requirements, treat it as P3 at most.
 
 Tag format: start each finding line with [P0], [P1], [P2], [P3], or [P4].
 Every P0/P1 finding MUST end with a concrete remediation on its own line:
-  -> FIX: exactly what to change in the code, with specific detail
-  Example: -> FIX: in filter.rs line 14, change the Code match arm to add yml after yaml.
+  -> FIX: exactly what to change in the code, with specific detail. Include the
+     target file path, function signature, and the specific code structure to implement.
+     For architectural changes, specify what to delete, what to replace it with, and
+     how it connects to the rest of the code. Vague FIX lines ("replace X with Y")
+     without the code structure are themselves a review defect.
   A P0/P1 without a FIX line is a review defect. Never just say "this is broken" -- tell the
   builder precisely what to change so the next round can satisfy it.
 

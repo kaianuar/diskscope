@@ -1,6 +1,8 @@
+pub mod cache;
 pub mod domain;
 pub mod filter;
 pub mod format;
+pub mod output;
 pub mod ports;
 pub mod scanner;
 pub mod tree;
@@ -8,12 +10,51 @@ pub mod tree;
 use std::fmt;
 use std::path::PathBuf;
 
+// ── Public API ─────────────────────────────────────────────────────────────
+//
+// Hexagonal architecture: domain types at center, adapters at edges.
+//
+// Domain (pure, zero deps):
+//   FileTree, Filter, FilterSet, FileNode, FileType, NodeKind
+//
+// Adapters:
+//   Scanner  — parallel filesystem walker (ignore + rayon)
+//   Cache    — persistent snapshot cache (redb)
+//   ScanConfig — scanner knobs
+//   OutputFormat — serialization format selector
+
+/// Parallel directory scanner — walks a filesystem tree and builds a [`ScanResult`].
+///
+/// Uses `ignore::WalkBuilder` for `.gitignore`-aware, parallel traversal.
+/// Configure with [`ScanConfig`].
+pub use scanner::walker::Scanner;
+
+/// Scanner configuration — minimal knobs for filesystem walking.
+pub use scanner::walker::ScanConfig;
+
+/// Persistent snapshot cache backed by `redb`.
+///
+/// Stores entire [`domain::FileTree`] snapshots for incremental re-scans.
+pub use cache::Cache;
+
+/// Complete file tree rooted at a single directory (domain model).
+pub use domain::FileTree;
+
+/// Single filter criterion applied to a file tree node.
+pub use domain::Filter;
+
+/// Set of filters combined with AND logic.
+pub use domain::FilterSet;
+
+// OutputFormat is defined inline below (used by ScanOptions).
+
 // ── Enums ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeType {
     File,
     Dir,
+    Symlink,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
