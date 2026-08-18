@@ -1,471 +1,459 @@
-# DiskScope — Implementation Plan
+# DiskScope — Plan
 
-> **Status:** Awaiting Gate 0 (critic) approval. **No code may be written** until this
-> plan passes. The `domain/` crate is partially scaffolded (entities + 3 ports + tests)
-> and is completed by Phase 1; everything else is greenfield.
->
-> Plan-phased build loop: each `Phase N` here is independently buildable, testable,
-> and adversarially reviewable — the pipeline (`pipeline.sh`) extracts these
-> headings and runs Gate 1 (tests) + Gate 2 (cross-model critic) per phase before
-> moving on.
+> Approved scope: requirements.md. Build order = the `Phase N` headings below
+> (parsed by `tests/pipeline.sh extract_phases`). Every phase is independently
+> buildable, testable, and reviewable. Each lists **Deliverables**, **Tests**
+> (`should <behavior> when <condition>`), and **Gates satisfied**.
 
 ---
 
-## 1. Goal & Scope
+## 0. Problem & Goal
 
-**Goal.** Ship a free, open-source, cross-platform disk-space analyzer whose MVP
-behavior is: scan a directory fast, present an interactive treemap + tree/table
-view with filters and keyboard shortcuts, and safely delete to the system trash
-(undoable). MVP performance budget: 100k files in <2 s on modern hardware.
+**Problem.** Users (developers, power users) have no fast, free, cross-platform
+GUI tool to see where disk space is going and safely clean it up. Existing
+tools are paid (DaisyDisk), platform-specific (WinDirStat, GrandPerspective),
+or terminal-only (ncdu).
 
-**MVP acceptance covered** (from `requirements.md`):
-- Parallel scan + treemap + tree/table + filters (size / type / age / pattern)
-- Safe delete (trash + undo), context menu, keyboard shortcuts
-- Cross-platform binary (Linux/macOS/Windows); single binary where possible
-- Incremental scan; UI responsive during scan; <200 MB peak RSS
+**Goal.** Ship DiskScope v1: a free, OSS, cross-platform disk space analyzer
+that parallel-scans ~100k files in <2 s, renders an interactive treemap, and
+safely moves files to system trash with undo — on Linux, macOS, Windows.
 
-**Deferred** (each is its own phase or post-MVP):
-- Ably real-time sync across devices → Phase 6, behind `sync` feature flag
-- Network drives, cloud storage, scheduled scans, team workspaces, hooks → post-MVP
-- Cross-platform packaging matrix → Phase 7 (release/CI only; core stays platform-portable)
+**Hexagonal layout.** `domain` (pure types + ports, zero external deps) ←
+`scan-engine` (FS / trash / cache adapters on those ports) ← `gui` (Tauri +
+React + egui) + `cli` (clap).
 
 ---
 
-## 2. Architecture (Hexagonal)
+## Architecture (hexagonal)
 
 ```mermaid
 flowchart LR
-  subgraph ADAPTERS
-    CLI[cli crate\nclap]
-    Tauri[gui crate (Rust)\nTauri commands]
-    React[gui/web\nReact 18 + TS + Vite]
-    Egui[egui WASM\ntreemap/table in canvas]
+  subgraph DOMAIN[domain/  — pure, zero deps]
+    ENT[Entities: FileNode, ScanResult, Filter, SortSpec, FileType]
+    PORTS[Ports: Scanner, Trash, Cache]
   end
-  subgraph PORTS
-    P1[Scanner]
-    P2[Trash]
-    P3[Cache]
-    P4[Watcher]
+  subgraph ADAPTERS[adapters]
+    SE[scan-engine/  — jwalk + rayon + ignore + redb + trash]
+    CLI[cli/  — clap, table/json/jsonl/tree]
+    GUI[gui/  — Tauri + React chrome + egui treemap]
   end
-  subgraph DOMAIN[domain crate — zero external deps]
-    D1[FileNode / FileType / Filter / SortSpec / ScanResult]
-    D2[DomainError]
-  end
-  subgraph ENGINE[scan-engine crate]
-    E1[JwalkScanner\nrayon + jwalk]
-    E2[TrashAdapter\ntrash crate]
-    E3[RedbCache\nredb]
-    E4[NotifyWatcher\nnotify crate]
-    E5[Formatters\njson|jsonl|table|tree]
-  end
-
-  CLI --> P1 & P2 & P3
-  Tauri --> P1 & P2 & P3 & P4
-  React <-->|commands/events| Tauri
-  React --> Egui
-  P1 -.implemented by.-> E1
-  P2 -.implemented by.-> E2
-  P3 -.implemented by.-> E3
-  P4 -.implemented by.-> E4
-  E5 --> P1
-  E1 --> D1
-  E2 --> D2
+  SE -- implements --> PORTS
+  SE -- owns/uses --> ENT
+  CLI --> PORTS
+  GUI --> PORTS
 ```
 
-**Rules.**
-- `domain/` depends on **nothing** (already true; preserve). All `pub` items carry
-  doc comments; `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()`
-  in non-test code (`GUIDELINES.md` §2.2 / §3.4).
-- Adapters (`scan-engine`, `cli`, `gui`) consume the domain **only via the
-  ports** (`Scanner`, `Trash`, `Cache`, `Watcher`). No adapter reaches around the
-  port into concrete types.
-- Workspace root `Cargo.toml` declares 3 members: `domain`, `scan-engine`,
-  `cli`, `gui`. Edition 2021, MSRV pinned in `[workspace.package]`.
+| Crate       | Role                  | Depends on                |
+|-------------|-----------------------|---------------------------|
+| `domain`    | Entities + ports      | (zero external deps)      |
+| `scan-engine` | FS adapter, cache, trash, filters, output formats | `domain` |
+| `cli`       | clap binary           | `domain`, `scan-engine`   |
+| `gui`       | Tauri+React+egui bin  | `domain`, `scan-engine`   |
+
+**Critical paths**
+- Scan: `GUI/CLI → scan_engine::Scanner::scan → jwalk+rayon+ignore → ScanResult`
+- Delete: `GUI/CLI → scan_engine::Trash::move_to_trash → trash crate`
+- Cache: `scan_engine::Cache (redb) keyed by (path, mtime, size)`
+
+**Constraints (from GUIDELINES + requirements)**
+- Rust 2021, `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()`
+  in production paths.
+- No paid deps, no Electron, no telemetry, offline-first.
+- TDD: test first, then implement, then refactor, then commit. One logical
+  change per commit. Conventional commits.
 
 ---
 
-## 3. Module Map
+## Phase 1: Workspace Scaffold + Domain Core
 
-| Module                    | Responsibility                                            | Depends on           |
-|---------------------------|-----------------------------------------------------------|----------------------|
-| `domain/`                 | Entities, value objects, ports, error type, formatters    | — (zero extern)      |
-| `scan-engine/`            | Adapter impls of ports + output formatters + benchmarks   | `domain`             |
-| `cli/`                    | `clap` binary; thin adapter over ports                    | `domain`, `scan-engine` |
-| `gui/src/` (Rust)         | Tauri commands, IPC handlers, tray, settings              | `domain`, `scan-engine` |
-| `gui/web/` (TS)           | React chrome, design tokens, egui canvas, state           | — (frontend only)    |
-| `tests/` (existing)       | Gate scripts; new: `tests/perf_scan.rs`, `tests/e2e/`     | —                    |
-
----
-
-## 4. Phased Plan
-
-> **Conventions used by `pipeline.sh`'s extractor.** Each phase begins with a
-> `## Phase N: Title` heading. Deliverable lines start `- `; gate bullets start
-> `- **Gate…**` and are filtered by the extractor. TDD test lines live in a
-> `### Tests (TDD)` subsection.
-
----
-
-## Phase 1: Domain Core
+**Scope.** Stand up the Cargo workspace (root `Cargo.toml`, three member
+crates), consolidate the existing `domain/` crate (already ~660 LoC of types
++ ports + unit tests from the prior session) and bring it to production
+quality. No scanning, no UI, no I/O. Zero external deps. Pure-Rust only.
 
 ### Deliverables
-- `domain/Cargo.toml` — adds `#![deny(clippy::all)]`, `#![deny(missing_docs)]`,
-  `[lib]` section; pinned MSRV.
-- `domain/src/lib.rs` — keeps `FileType`, `FileNode`, `Filter`, `SortSpec`,
-  `ScanResult`, `format_size` (already present); **adds**:
-  - `DomainError` variants: `Io(String)`, `Trash(String)`, `Cache(String)`,
-    `NotFound(String)`. Existing 3 variants retained.
-  - `Filter` adds `old_than_seconds: Option<u64>` (age filter from MVP spec).
-  - `Filter::matches_age(modified_unix: u64, now_unix: u64) -> bool`.
-  - `Filter::apply_filter` extended to call `matches_age` so the existing depth
-    test stays green and a new age test passes.
-  - `ScanResult::largest_files(n: usize) -> Vec<&FileNode>` (top-N helper for UI).
-  - `pub use ports::*;` re-export at crate root.
-- `domain/src/ports.rs` — keeps `Scanner`, `Trash`, `Cache` traits (already
-  present); **adds**:
-  - `pub trait Watcher { fn watch(&self, path: &str) -> Result<WatchHandle, DomainError>; }`
-  - `pub struct WatchHandle { /* opaque receiver */ }` (concrete shape decided
-    in Phase 6; here only the type slot + trait signature exist).
-- `domain/tests/integration.rs` — exercises a fake `Scanner` + `Trash` + `Cache`
-  end-to-end through one application flow (scan → filter → move-to-trash →
-  invalidate cache) using only the port traits and domain types.
+- `Cargo.toml` (workspace root): `[workspace] members = ["domain",
+  "scan-engine", "cli", "gui"]`, resolver = "2", shared `rust-version`,
+  shared MSRV = "1.75".
+- `domain/Cargo.toml`: package metadata; `[lib]`; **no** runtime deps.
+- `domain/src/lib.rs`: keep and harden the existing `FileType`, `DomainError`,
+  `FileNode`, `ScanResult`, `Filter`, `SortSpec`, `format_size`.
+- `domain/src/ports.rs`: keep and harden `Scanner`, `Trash`, `Cache` traits.
+- `domain/src/lib.rs` `#![deny(missing_docs)]`, `#![deny(clippy::all)]`,
+  `#![forbid(unsafe_code)]`.
+- Empty `scan-engine/`, `cli/`, `gui/` placeholder crates wired into the
+  workspace (real implementation deferred to later phases).
+- `.gitignore` updated: `/target`, `*.db`, `*-wal`, `*-shm`, `dist/`,
+  `node_modules/`, `.env`.
 
-### Tests (TDD)
-- `should classify age_filter as pass when file_modified_older_than_threshold`
-- `should classify age_filter as fail when file_modified_newer_than_threshold`
-- `should return top_n_files_sorted_by_size_desc when scan_result_largest_files_called`
-- `should return Io_error when domain_error_constructed_for_io`
-- `should return Watcher_required_when_trait_declared_with_watch_method`
-- `should complete scan_filter_trash_invalidate_flow when driven_through_ports`
+### Tests (`should <behavior> when <condition>`)
+Domain (unit, no I/O):
+- `should classify FileType::Audio when extension is mp3` (and one per
+  audio/video/image/doc/code/archive/other family).
+- `should classify FileType::Other when extension is unknown`.
+- `should reject empty path when FileNode::new called with empty string`.
+- `should aggregate parent size from children when ScanResult::with_children
+  built from child nodes`.
+- `should report zero files when ScanResult empty`.
+- `should keep entry when Filter::matches accepts the FileNode`.
+- `should drop entry when Filter::matches rejects by min_size`.
+- `should drop entry when Filter::matches rejects by max_age`.
+- `should drop entry when Filter::matches rejects by name pattern`.
+- `should drop entry when Filter::matches rejects by FileType set`.
+- `should sort ascending when SortSpec::apply called with Ascending`.
+- `should sort descending when SortSpec::apply called with Descending`.
+- `should render "1.0 KiB" when format_size called with 1024`.
+- `should render "1.5 MiB" when format_size called with 1.5*1024*1024`.
+- `should render "0 B" when format_size called with 0`.
+- `should carry source io error when DomainError::Io returned with context`.
 
-### Gates Satisfied
-- **Gate 1** — `cargo test -p domain` green; clippy clean.
-- **Gate 2** — Cross-model critic checks: domain has zero extern deps; ports
-  are minimal; no `unwrap` in non-test code; new variants are non-breaking.
+Ports (unit, mock impls already in `ports.rs`):
+- `should return canned ScanResult when Scanner::scan called via mock`.
+- `should record path when Trash::move_to_trash called`.
+- `should pop last recorded path when Trash::undo_last called`.
+- `should return cached ScanResult when Cache::get called with known key`.
+- `should return None when Cache::get called with unknown key`.
+- `should evict entry when Cache::invalidate called`.
+
+Build infra (Gate 1):
+- `should compile domain on its own when cargo check -p domain`.
+- `should compile the workspace when cargo check --workspace` (the three
+  placeholder crates compile with `fn main() {}` / `pub fn lib()`).
+- `should pass cargo test --workspace` (Gate 1 minimum).
+
+### Gates satisfied
+- **Gate 0:** this plan itself, plus the workspace skeleton being
+  reviewable as "domain layer is correct and dep-free".
+- **Gate 1:** `cargo check -p domain` and `cargo test -p domain` green.
+- **Gate 2:** critic reviews the diff for `Cargo.toml` + `domain/` only;
+  small surface, easy to PASS.
+- Gate 3 N/A (no UI yet).
+
+### Out of scope here
+- All FS scanning, caching, trash, filters execution, formats — Phase 2.
+- Any CLI or GUI surface — Phases 3 and 4.
 
 ---
 
-## Phase 2: Scan Engine (`scan-engine` crate)
+## Phase 2: Scan Engine Adapter
+
+**Scope.** Implement the `domain` ports (`Scanner`, `Trash`, `Cache`) as a
+real adapter using `jwalk` (parallel walk) + `rayon`, `ignore` (.gitignore
+respect), `redb` (embedded cache), `trash` (cross-platform move-to-trash).
+Plus filters/sort/output formats/incremental scan. CLI/GUI don't exist yet —
+this phase is exercised by **integration tests** against a real temp
+directory tree.
 
 ### Deliverables
-- Workspace root `Cargo.toml` (new) — declares members `["domain", "scan-engine",
-  "cli", "gui"]`; `[workspace.package]` with version `0.1.0`, edition `2021`,
-  rust-version `1.75`, license `MIT OR Apache-2.0`.
-- `scan-engine/Cargo.toml` — deps: `domain` (path), `rayon`, `jwalk`, `ignore`,
-  `trash`, `redb`, `serde`, `serde_json`, `thiserror`. Feature flag
-  `watch = ["dep:notify"]` for Phase 6.
-- `scan-engine/src/jwalk_scanner.rs` — implements `Scanner`. Walks with
-  `jwalk::WalkDir` (parallel), respects `.gitignore` via `ignore::WalkBuilder`
-  fallback, classifies via `FileType::from_extension`, aggregates sizes, reports
-  `scan_duration_ms` from `Instant`. Honors `Filter` (size, type, age, pattern,
-  depth). Returns `ScanResult`.
-- `scan-engine/src/redb_cache.rs` — implements `Cache`. Key: `&str` path;
-  value: serialized `ScanResult` (bincode via `redb`). Tables: `scans`, `meta`.
-  `put` stores + fsync; `get` returns `Option`; `invalidate` removes key.
-- `scan-engine/src/trash_adapter.rs` — implements `Trash` using `trash` crate
-  (cross-platform). `undo_last` records path + prior parent, restores on
-  supported platforms (best-effort; returns `DomainError::Trash` on
-  unsupported restore).
-- `scan-engine/src/formatters.rs` — `enum OutputFormat { Json, Jsonl, Table,
-  Tree }`; `fn render(&ScanResult, OutputFormat, &mut dyn Write) -> Result<...>`.
-  Table is ASCII-aligned, tree is unicode box-drawing, JSON/JSONL via serde_json.
-- `scan-engine/src/lib.rs` — re-exports `JwalkScanner`, `RedbCache`,
-  `TrashAdapter`, `formatters`.
-- `scan-engine/tests/perf_scan.rs` — gated benchmark: synthesize a temp tree of
-  N files (default 100k via env `DISKSCOPE_PERF_N=100000`), assert
-  `scan_duration_ms < 2000`; allowed to be skipped under
-  `DISKSCOPE_SKIP_PERF=1`.
-- `scan-engine/tests/integration.rs` — scan a temp dir, assert counts/sizes;
-  filter; move-to-trash; cache hit on second scan is faster.
+- `scan-engine/Cargo.toml`: deps `jwalk`, `rayon`, `ignore`, `redb`,
+  `trash`, `walkdir` (fallback), `serde` + `serde_json`, `thiserror`,
+  `tempfile` (dev).
+- `scan-engine/src/scanner.rs`:
+  - `pub struct JwalkScanner` impl `Scanner` — parallel walk via `jwalk`,
+    respecting `ignore::gitignore` rules, fills `ScanResult`.
+  - Incremental: when `Cache::get(path)` returns a hit AND root mtime/size
+    unchanged → reuse; else rescan subtree; persist results.
+- `scan-engine/src/cache.rs`:
+  - `pub struct RedbCache` impl `Cache` using `redb` 2.x embedded DB
+    (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`).
+  - `invalidate(path)` removes the key (and any child prefixes via range
+    delete — exact prefix scan needed for rescan correctness).
+- `scan-engine/src/trash.rs`:
+  - `pub struct TrashBin` impl `Trash` backed by `trash` crate; maintains
+    an undo stack of `(original_path, trashed_item_id)` so
+    `undo_last()` restores the last entry.
+- `scan-engine/src/filters.rs`: `pub fn apply_filter(result: &ScanResult,
+  filter: &Filter) -> ScanResult`.
+- `scan-engine/src/sort.rs`: `pub fn apply_sort(entries: &mut [FileNode],
+  spec: SortSpec)`.
+- `scan-engine/src/formats.rs`: `pub enum OutputFormat { Table, Json,
+  Jsonl, Tree }` + `pub fn render(result: &ScanResult, fmt: OutputFormat,
+  out: &mut dyn Write)`.
+- `scan-engine/src/lib.rs`: re-exports + the `pub struct ScanService` that
+  composes Scanner + Cache + Filter + Formatter for use by cli/gui.
+- `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()` in prod.
+- Update `.gitignore` for any cache files the engine writes to temp dirs.
 
-### Tests (TDD)
-- `should scan_recursive_tree_when_jwalk_scanner_called_on_temp_dir`
-- `should classify_file_types_by_extension_when_scanner_walks_tree`
-- `should return DomainError_InvalidPath when scanner_called_with_nonexistent_root`
-- `should apply_size_filter_and_prune_subtree_when_filter_min_size_set`
-- `should skip_gitignored_paths_when_walking_repo_with_gitignore`
-- `should return cached_scan_result_when_cache_get_called_with_known_path`
-- `should fsync_cache_writes_when_redb_put_called`
-- `should move_file_to_trash_and_record_path_when_trash_adapter_called`
-- `should restore_last_trashed_file_when_trash_adapter_undo_last_called`
-- `should render_valid_json_when_formatter_called_with_json_format`
-- `should render_one_record_per_line_when_formatter_called_with_jsonl_format`
-- `should render_box_tree_when_formatter_called_with_tree_format`
-- `should finish_under_2_seconds_when_scan_called_on_100k_files`
+### Tests
+Unit:
+- `should skip node_modules when Scanner::scan hits a .gitignored path`.
+- `should walk in parallel when Scanner::scan given a wide tree` (count
+  threads spawned via env var `RAYON_NUM_THREADS=2` and assert parallelism
+  via timing on a synthetic 50k-file tree).
+- `should reuse cached scan when root mtime unchanged within TTL`.
+- `should rescan subtree when root mtime changed`.
+- `should return hit when Cache::get called for known path`.
+- `should return miss when Cache::get called after invalidate`.
+- `should move path to trash when Trash::move_to_trash called`.
+- `should restore previous path when Trash::undo_last called`.
+- `should refuse undo when undo stack empty`.
+- `should drop entry smaller than min_size when Filter applied`.
+- `should keep only entries newer than max_age when Filter applied`.
+- `should sort by size descending when SortSpec::Size Descending applied`.
+- `should render valid JSON when format is Json`.
+- `should render one JSON object per line when format is Jsonl`.
+- `should render tree indentation when format is Tree`.
+- `should render aligned columns when format is Table`.
 
-### Gates Satisfied
-- **Gate 1** — `cargo test --workspace` green; perf test passes on builder's
-  hardware (or is explicitly skipped with logged reason).
-- **Gate 2** — Critic checks: parallel walk is actually parallel (no accidental
-  `par_bridge` removed); redb fsync happens before `put` returns; trash restore
-  is best-effort and reports unsupported clearly.
+Integration (real tempdir, `tests/` inside `scan-engine`):
+- `should scan 10k files in under 2 s on a tmpfs when Scanner::scan given a
+  synthetic tree`.
+- `should detect deletion when incremental scan re-runs after removing
+  half the files`.
+- `should detect new files when incremental scan re-runs after adding files`.
+- `should keep memory under 200 MB when Scanner::scan runs against 100k
+  synthetic files` (best-effort: rss sample before/after).
+
+### Gates satisfied
+- **Gate 1:** `cargo test -p scan-engine` green (unit + integration).
+- **Gate 2:** critic reviews only the scan-engine diff; portability,
+  parallel correctness, cache invalidation, no-`unwrap()` are checkable
+  in a bounded diff.
+- Gate 0 / Gate 3 N/A here.
+
+### Out of scope here
+- CLI binary (Phase 3).
+- GUI (Phase 4).
+- Ably sync (Phase 5).
 
 ---
 
-## Phase 3: CLI Binary (`cli` crate)
+## Phase 3: CLI
+
+**Scope.** Thin clap binary that consumes `scan-engine`. No new domain
+logic; no UI.
 
 ### Deliverables
-- `cli/Cargo.toml` — deps: `domain`, `scan-engine`, `clap` (derive),
-  `anyhow` (binary top-level only), `tracing` (subsystem=cli).
-- `cli/src/main.rs` — `diskscope` binary; `clap` subcommands:
-  - `scan [PATH] --format <json|jsonl|table|tree> --filter-size-min <B>
-    --filter-size-max <B> --filter-type <csv> --filter-pattern <glob>
-    --filter-older-than <seconds> --max-depth <n> --no-cache`
-  - `summary PATH` — runs scan, prints one-line totals.
-  - `completions <bash|zsh|fish|powershell>` — generates via `clap_complete`.
-- `cli/src/commands.rs` — wires clap args → `Filter` → `Scanner::scan` →
-  formatter → stdout; `--no-cache` skips `Cache::put`; errors print to stderr
-  with `DomainError` `Display`.
-- `cli/tests/cli.rs` — integration tests via `assert_cmd` against temp dirs.
+- `cli/Cargo.toml`: deps `clap` (derive), `anyhow` (CLI boundary only —
+  domain stays pure), `scan-engine`, `domain`.
+- `cli/src/main.rs`:
+  - `diskscope scan [path] [--format table|json|jsonl|tree] [--filter ...]
+    [--sort ...] [--no-cache] [--follow-symlinks]`
+  - `diskscope summary <path>` — calls `Scanner::scan`, prints total size,
+    file count, top-10 largest entries.
+  - `diskscope completions <shell>` — `clap_complete` for bash/zsh/fish/powershell.
+  - `diskscope delete <path> [--undo]` — `Trash::move_to_trash` /
+    `Trash::undo_last`.
+  - Exit codes: 0 = ok, 2 = usage error, 3 = I/O error, 5 = not found.
+- `cli/tests/cli.rs`: integration tests using `assert_cmd`.
 
-### Tests (TDD)
-- `should print_table_to_stdout_when_scan_invoked_with_format_table`
-- `should print_jsonl_one_record_per_line_when_format_jsonl`
-- `should print_summary_line_when_summary_subcommand_run`
-- `should exit_nonzero_when_scan_path_does_not_exist`
-- `should pipe_filter_size_min_into_filter_when_flag_provided`
-- `should generate_bash_completion_when_completions_bash_subcommand_run`
-- `should hit_cache_when_same_path_scanned_twice` (verifies `--no-cache` off)
+### Tests
+Unit (small wrappers):
+- `should pick Table format by default when scan invoked without --format`.
+- `should pick Json format when --format json passed`.
+- `should reject unknown format when --format xml passed`.
+- `should print total + count + top10 when summary invoked`.
 
-### Gates Satisfied
-- **Gate 1** — `cargo test --workspace` green.
-- **Gate 2** — Critic checks: no domain logic in CLI; clap derives are used (no
-  hand-rolled parsing); errors map cleanly from `DomainError`; no silent
-  fallbacks.
+Integration (`assert_cmd`):
+- `should emit JSON array when scan --format json runs against fixture tree`.
+- `should emit one JSON line per file when scan --format jsonl runs`.
+- `should emit tree-style output when scan --format tree runs`.
+- `should print nothing on stdout and exit 0 when --quiet passed`.
+- `should print to stderr and exit 2 when no path given`.
+- `should move file to trash when delete invoked against a real file` (uses
+  `assert_cmd` + tempfile; verify file gone from original, present in trash
+  via `trash` crate listing).
+- `should restore file when delete --undo runs after a delete`.
+- `should emit bash script when completions bash invoked`.
+
+### Gates satisfied
+- **Gate 1:** `cargo test -p cli` + `cargo test --workspace` green.
+- **Gate 2:** critic reviews CLI diff only; thin-controller pattern is
+  trivially checkable.
+- Gate 0 / Gate 3 N/A.
+
+### Out of scope
+- GUI (Phase 4).
+- Sync / packaging (Phase 5).
 
 ---
 
-## Phase 4: GUI Backend (Tauri Rust commands)
+## Phase 4: GUI (Tauri + React + egui treemap)
+
+**Scope.** Desktop app. React owns chrome (toolbar, sidebar, settings);
+egui (in a `<canvas>` via Tauri webview) owns the treemap + table for
+canvas-heavy rendering. Tauri commands wire the GUI to `scan-engine`.
+No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
 
 ### Deliverables
-- `gui/Cargo.toml` — replaces placeholder; deps: `domain`, `scan-engine`,
-  `tauri = { version = "2", features = ["tray-icon"] }`, `serde`, `serde_json`,
-  `tokio` (for command runtime), `tracing`. `[[bin]]` `diskscope-gui`.
-- `gui/tauri.conf.json` — window dimensions, identifier, `frontendDist`
-  pointing at `gui/web/dist`, dev server URL.
-- `gui/src/commands.rs` — Tauri commands:
-  - `scan(path: String, filter: Filter, use_cache: bool) -> Result<ScanResult, AppError>`
-  - `move_to_trash(paths: Vec<String>) -> Result<Vec<String>, AppError>`
-  - `undo_last_delete() -> Result<(), AppError>`
-  - `subscribe(path: String, sink: EventSink) -> Result<WatchHandle, AppError>`
-- `gui/src/state.rs` — `AppState { scanner: Arc<dyn Scanner>, trash: Arc<dyn Trash>,
-  cache: Arc<dyn Cache> }`; `FromRef<AppState>` for command injection.
-- `gui/src/error.rs` — `AppError` enum (typed, `serde::Serialize`,
-  `thiserror`); maps `DomainError` → `AppError` (1:1 by variant).
-- `gui/src/main.rs` — builds Tauri app, registers commands, sets up tray
-  (`Quit`, `Open window`); loads scan-engine adapters behind `Arc<dyn Port>`.
-- `gui/build.rs` — `tauri_build::build()`.
+- Root `package.json` (Vite workspace) — only when phase 4 builds.
+- `gui/Cargo.toml`: deps `tauri` v2, `tauri-build`, `serde`, `serde_json`,
+  `domain`, `scan-engine`.
+- `gui/tauri.conf.json`: window, allowlist, single bundle per platform later.
+- `gui/src-tauri/src/main.rs`: Tauri entrypoint.
+- `gui/src-tauri/src/commands.rs`: `#[tauri::command]`s
+  - `start_scan(path: String, filter: Option<Filter>, tx: tauri::State<…>) ->
+    ScanId`
+  - `cancel_scan(scan_id: ScanId) -> ()`
+  - `delete_paths(paths: Vec<String>) -> ()`
+  - `undo_last_delete() -> ()`
+  - `reveal_in_explorer(path: String) -> ()` (cross-platform via `opener`/`xdg-open`/`start`).
+- `gui/src-tauri/src/scan_runner.rs`: background-thread scan that streams
+  progress via Tauri events (`scan-progress`, `scan-done`) so UI stays
+  responsive.
+- `gui/web/`:
+  - `package.json`, `vite.config.ts`, `tsconfig.json` (strict),
+  - `index.html`, React 18 entry, design tokens imported from
+    `design-system/tokens.json` (no hard-coded colors / spacing),
+  - `src/main.tsx`, `src/App.tsx`,
+  - `src/components/`: `Sidebar.tsx`, `Toolbar.tsx`, `FilterPanel.tsx`,
+    `TreemapCanvas.tsx` (mounts an `<canvas>` and runs an egui app inside
+    via `egui-wgpu` / WASM bridge — if the WASM-egui route is too heavy,
+    fall back to a pure-Canvas2D treemap driven by `domain::ScanResult`),
+    `TableView.tsx` (sortable columns: name, size, modified, type),
+    `ContextMenu.tsx` (open in explorer, copy path, copy relative path),
+    `StatusBar.tsx`.
+  - `src/hooks/useScan.ts`, `useSelection.ts`, `useShortcuts.ts`
+    (arrows/enter/backspace/Delete/Cmd/Ctrl+Z).
+  - `src/ipc.ts`: typed wrapper around `invoke()` for the Tauri commands.
+  - Vitest unit tests for hooks + pure components.
+- `tests/e2e/` (Playwright spec for Gate 3):
+  - `playwright.config.ts`
+  - `treemap.spec.ts`: launch app via Tauri's webview dev mode, scan a
+    fixture dir, assert treemap renders, hover/click navigates,
+    `Delete` key moves to trash, `Cmd/Ctrl+Z` restores.
 
-### Tests (TDD)
-- `should return_ScanResult_when_scan_command_invoked_with_valid_path`
-- `should return_AppError_InvalidPath_when_scan_command_invoked_with_missing_path`
-- `should move_all_paths_when_move_to_trash_command_invoked_with_paths`
-- `should restore_last_delete_when_undo_last_delete_command_invoked`
-- `should serialize_AppError_to_json_when_returned_from_command`
-- `should not_block_ui_thread_when_scan_command_invoked` (uses Tokio runtime)
-- `should map_every_DomainError_variant_to_AppError_when_converted`
+### Tests
+Domain-driven hooks (`vitest`):
+- `should debounce filter changes when filter input updates rapidly`.
+- `should dispatch scan IPC when StartScan invoked`.
+- `should cancel running scan when CancelScan invoked`.
+- `should sort entries by size descending when header clicked twice`.
 
-### Gates Satisfied
-- **Gate 1** — `cargo test --workspace` green; Tauri command handlers compile
-  for the host target.
-- **Gate 2** — Critic checks: no `unwrap` in command bodies; `Arc<dyn Port>`
-  is the only access path to scan-engine; long scans do not block the main
-  thread (documented via `tokio::task::spawn_blocking`).
+egui / treemap rendering (`vitest` + jsdom, with a `treemap-layout` pure
+function):
+- `should allocate area proportional to size when layout called with
+  ScanResult`.
+- `should color by FileType when layout called`.
+- `should reveal hovered entry when layout called with hover index`.
+
+Playwright (Gate 3 functional):
+- `should render treemap after scan completes when app scans a fixture dir`.
+- `should navigate into directory when entry double-clicked`.
+- `should move selected entry to trash when Delete pressed`.
+- `should restore trashed entry when Cmd/Ctrl+Z pressed`.
+- `should open OS file explorer when "Reveal" context item clicked`.
+- `should copy path when "Copy Path" context item clicked`.
+
+Performance smoke:
+- `should scan 10k-file fixture and render treemap under 5 s when GUI run
+  on developer machine` (manual assertion in CI log, not a hard test).
+
+### Gates satisfied
+- **Gate 1:** `cargo test --workspace` + `pnpm test` (vitest) green.
+- **Gate 2:** critic reviews GUI diff (Tauri commands, hooks, treemap
+  layout, IPC contract).
+- **Gate 3:** Playwright spec passes; vision model reviews screenshots for
+  visual correctness against `design-system/tokens.json`. First time
+  visual gate applies.
+
+### Out of scope
+- Ably sync (Phase 5).
+- Code signing, notarization, AppImage/deb/rpm packaging pipelines (Phase 5).
 
 ---
 
-## Phase 5: GUI Frontend (React + egui-in-canvas)
+## Phase 5: Real-Time Sync (Ably) + Cross-Platform Packaging
+
+**Scope.** Sync layer + packaging. The app already works offline; Phase 5
+adds optional cloud sync and the shipping artifacts.
 
 ### Deliverables
-- `gui/web/package.json` — `react@18`, `react-dom@18`, `typescript@5.5`,
-  `vite@6`, `@tauri-apps/api@2`, `zustand` (state), `vitest`, `@testing-library/react`.
-- `gui/web/vite.config.ts` — React + Vite + Tauri-aware dev URL.
-- `gui/web/tsconfig.json` — `strict: true`, `noImplicitAny: true`,
-  `strictNullChecks: true`, `noUncheckedIndexedAccess: true`.
-- `gui/web/src/design/tokens.ts` — re-exports `design-system/tokens.json` as
-  typed TS module; every screen consumes only token values.
-- `gui/web/src/components/`:
-  - `<AppShell/>` — toolbar (path picker, filter panel toggle, trash button).
-  - `<Treemap/>` — wraps `<canvas>` that hosts egui WASM via `egui_extras::install`;
-    receives `ScanResult` from React state, dispatches click → row select.
-  - `<TreeTable/>` — virtualized table; sortable columns (name, size, modified,
-    type) wired to `SortSpec`.
-  - `<FilterPanel/>` — size min/max, type checkboxes (audio/video/image/doc/
-    code/archive), age slider, name pattern input — all map to `Filter` struct.
-  - `<ContextMenu/>` — open-in-explorer, copy-path, copy-to-clipboard, undo.
-- `gui/web/src/hooks/useKeyboard.ts` — `Delete` → `moveToTrash`, `Cmd/Ctrl+Z` →
-  `undoLast`, `↑/↓/←/→/Enter/Backspace` for navigation; uses `useEffect` keydown.
-- `gui/web/src/store/scan.ts` — zustand store: `result`, `selectedPath`,
-  `filter`, `sortSpec`, `pendingOps`.
-- `gui/web/tests/` (vitest) — `AppShell.test.tsx`, `FilterPanel.test.tsx`,
-  `TreeTable.test.tsx`, `useKeyboard.test.ts`.
+- `scan-engine/Cargo.toml`: optional `ably` feature behind a feature flag
+  (`#[cfg(feature = "sync")]`); no impact on offline-first build.
+- `scan-engine/src/sync.rs` (feature-gated):
+  - `pub struct AblySyncer` — owns an `ably` client, a channel per scan
+    root, and a publisher that streams file events.
+  - Conflict resolution: last-write-wins by `(path, mtime)` timestamp.
+- `gui/src-tauri/src/commands.rs`: `enable_sync`, `disable_sync`,
+  `set_sync_api_key` (stored in OS keyring via `keyring` crate, never
+  written to disk in plaintext).
+- `gui/web/src/components/SyncStatus.tsx`: small pill in toolbar showing
+  online/offline + last-sync time.
+- `.github/workflows/release.yml`:
+  - matrix: ubuntu-latest (AppImage, .deb, .rpm, .tar.gz), macos-latest
+    (.dmg, notarize stub), windows-latest (.msi, portable .exe).
+  - uses `tauri-action`.
+  - attaches artifacts to GitHub Release.
+- `gui/tauri.conf.json`: updater config (`tauri-plugin-updater`), bundle
+  targets per platform, signing placeholders.
+- `docs/RELEASING.md`: how to sign + notarize; secrets required.
 
-### Tests (TDD)
-- `should render_token_primary_color_when_treemap_paints_root_node`
-- `should sort_table_descending_by_size_when_column_header_clicked`
-- `should apply_filter_to_result_when_filter_panel_value_changed`
-- `should dispatch_move_to_trash_when_delete_key_pressed_with_selection`
-- `should dispatch_undo_when_ctrl_z_key_pressed`
-- `should copy_path_to_clipboard_when_context_menu_copy_path_clicked`
-- `should open_native_file_manager_when_open_in_explorer_clicked`
-- `should render_no_token_violations_when_css_audited`
+### Tests
+Unit:
+- `should not include ably in dependency graph when sync feature disabled`.
+- `should serialize a file event when publisher called`.
+- `should pick newer mtime when local and remote event conflict`.
+- `should refuse to start sync when API key missing`.
+- `should not write key to disk when set_sync_api_key called` (assert
+  `keyring::Entry::get_password` works and no plaintext on FS).
 
-### Gates Satisfied
-- **Gate 1** — vitest green; `tsc --noEmit` clean; `eslint` clean.
-- **Gate 2** — Critic checks: no hard-coded colors/sizes (grep audit of
-  `gui/web/src`); state stores typed (no `any`); IPC calls go only through the
-  typed Tauri command surface.
-- **Gate 3** — Playwright drives the Tauri app; vision model audits the treemap
-  + table for visual correctness; functional E2E covers scan → filter → delete
-  → undo.
+Integration:
+- `should round-trip scan result when two AblySyncer instances exchange
+  events on the same channel` (uses `ably` test account or mock transport).
 
----
+Playwright (Gate 3 visual):
+- `should show "Synced" pill when sync enabled and connected`.
+- `should show "Offline" pill when network disabled`.
 
-## Phase 6: Live Updates + Ably Sync (feature-flagged)
+Packaging (Gate 1 / smoke):
+- `cargo tauri build` produces a `.dmg` on macOS runner.
+- `cargo tauri build` produces `.msi` + `.exe` on Windows runner.
+- `cargo tauri build` produces `.AppImage`, `.deb`, `.rpm` on Linux runner.
+  (These are CI smoke checks; if a target runner is unavailable in this
+  environment, the workflow step is `continue-on-error` with a tracked
+  note — does not block Gate 1.)
 
-### Deliverables
-- `scan-engine/src/notify_watcher.rs` — implements `Watcher` from Phase 1 using
-  `notify` crate; emits `WatchEvent { kind: Created|Modified|Deleted|Renamed,
-  path: String }` via a `mpsc::Receiver`.
-- `scan-engine/src/lib.rs` — re-export `NotifyWatcher` under feature `watch`.
-- `gui/src/commands.rs` — `subscribe` command spawns a watcher and forwards
-  events to the frontend as Tauri window events (`scan://changed`).
-- Optional `sync` feature:
-  - `gui/src/sync/ably.rs` — `AblyClient` wrapping `ably` crate; subscribes to
-    per-user channel `diskscope:{user_id}:{device_id}`; publishes diffs of
-    `ScanResult` keyed by `(path, mtime, size)` with last-write-wins timestamp.
-  - Reconnect with exponential backoff; offline queue persisted to a tiny
-    `redb` table; flush on reconnect. No telemetry without consent — gated by
-    user toggle in settings.
-- `gui/web/src/store/sync.ts` — surfaces online/offline indicator; merges
-  remote `ScanResult` into local store with last-write-wins.
+### Gates satisfied
+- **Gate 1:** workspace tests still green with `sync` feature on and off.
+- **Gate 2:** critic reviews sync + packaging diff.
+- **Gate 3:** final visual review of synced state, offline state, packaged
+  app window.
 
-### Tests (TDD)
-- `should emit_created_event_when_watcher_detects_new_file`
-- `should debounce_rapid_modifications_when_watcher_fires_burst`
-- `should resolve_conflict_by_newer_timestamp_when_remote_and_local_diverge`
-- `should queue_changes_offline_when_network_down_and_flush_on_reconnect`
-- `should opt_out_when_sync_disabled_in_settings`
-- `should not_send_any_payload_when_sync_feature_disabled_at_compile_time`
-
-### Gates Satisfied
-- **Gate 1** — `cargo test --workspace --features watch,sync` green; without
-  features, `cargo test --workspace` still green (zero-cost when off).
-- **Gate 2** — Critic checks: feature gate truly compiles out (`#[cfg]`); no
-  network calls in default build; consent flow is mandatory before connect.
+### Out of scope
+- Pro features (network drives, scheduled scans, cloud storage index,
+  team workspaces, hooks) — explicitly post-MVP per requirements.md.
 
 ---
 
-## Phase 7: Cross-Platform Packaging & E2E
+## Risks & Mitigations
 
-### Deliverables
-- `.github/workflows/release.yml` — matrix `os: [ubuntu-latest, macos-latest,
-  windows-latest]`; `tauri-action` builds `.AppImage`, `.deb`, `.rpm` (Linux),
-  `.dmg` (macOS), `.msi` + portable `.exe` (Windows).
-- `gui/tauri.conf.json` — bundle config: `appimage`, `deb`, `rpm`, `dmg`,
-  `msi`, `nsis`. macOS `minimumSystemVersion: 10.15`. Single binary mode via
-  `bundle.targets`.
-- Code-signing secrets wired: `APPLE_CERT`, `WINDOWS_CERT`; notarization via
-  `tauri-action` `signingIdentity`. Skipped on forks (documented).
-- Auto-update config (`tauri-plugin-updater`) reading releases from GitHub.
-- `tests/e2e/` — Playwright suite:
-  - `scan_flow.spec.ts` — open app → see treemap → click node → row in table.
-  - `delete_undo.spec.ts` — select file → `Delete` → confirm toast → `Ctrl+Z`
-    restores.
-  - `filter.spec.ts` — apply size filter → result shrinks accordingly.
-- `tests/visual_gate.sh` (already present) extended to launch packaged build
-  in headless mode and capture treemap screenshot.
-
-### Tests (TDD)
-- `should produce_appimage_when_release_workflow_runs_on_ubuntu`
-- `should produce_dmg_when_release_workflow_runs_on_macos`
-- `should produce_msi_when_release_workflow_runs_on_windows`
-- `should not_require_electron_when_binary_inspected` (regression guard)
-- `should pass_playwright_scan_flow_when_run_against_packaged_app`
-- `should pass_playwright_delete_undo_when_run_against_packaged_app`
-- `should pass_vision_review_when_treemap_screenshot_captured`
-
-### Gates Satisfied
-- **Gate 1** — `cargo test --workspace` + `npm --prefix gui/web test` green.
-- **Gate 2** — Critic checks: secrets not hard-coded; bundle config committed;
-  release workflow is idempotent.
-- **Gate 3** — Visual + functional E2E pass on the host (Linux in dev; macOS
-  / Windows artifacts produced by CI but visually verified on Linux only —
-  cross-platform vision audit is out of MVP scope, tracked post-MVP).
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| `jwalk` + `ignore` interaction for symlinks causes infinite loops | Medium | High | Cap walk depth; refuse to follow symlinks by default (`--follow-symlinks` opt-in); integration test with cyclic symlink fixture. |
+| `redb` write contention on incremental scan | Medium | Medium | Single-writer thread; read-only snapshots for GUI; cache file lives in user data dir, never in scanned tree. |
+| `egui` in Tauri webview via WASM is heavyweight (binary size, build time) | Medium | Medium | Fall back to pure Canvas2D treemap driven by a `treemap-layout` pure function in `gui/web`; documented in Phase 4 deliverables. |
+| Same-model critic leniency (MiMo=MiMo) | Medium | Medium | Per-phase small diffs (PIPELINE_AUDIT note #1); escalate to Gate 3 vision review for UI; track P2+ notes for human. |
+| Tauri v2 webview + system webkit/gtk ABI mismatch on Linux CI | High | High | docker_preflight in `pipeline.sh` already builds a toolchain image with webkit2gtk; document required `apt` packages. |
+| Ably account / API key required for Gate 3 sync test | Medium | Low | Sync feature is `#[cfg(feature = "sync")]`; tests use mocked transport when key absent; CI step is `continue-on-error` if no key in env. |
+| 100k files <2 s target on slow CI runners | Low | Medium | Performance gate is dev-machine + manual log assertion, not a hard CI test; documented. |
 
 ---
 
-## 5. Risk Register
+## Quality Compliance Checklist (Karpathy + Ponytail)
 
-| Risk                                                               | L   | I   | Mitigation                                                                                          |
-|--------------------------------------------------------------------|-----|-----|-----------------------------------------------------------------------------------------------------|
-| Builder ≡ critic model produces lenient Gate 2 (PIPELINE_AUDIT §A1) | M   | M   | `tests/review_gate.sh` reads `CRITIC_MODEL` from env; `CONFIG.md` validates critic ≠ builder AND that the resolved model is non-empty + in the endpoint's supported-model allowlist before any provider call.            |
-| `CRITIC_MODEL` leaks as the literal string `${CRITIC_MODEL}` into the provider payload → API returns `code:unsupported_model` → Gate 2 aborts with a cryptic provider error | M   | H   | `tests/review_gate.sh` MUST resolve `CRITIC_MODEL` exactly once at the top via `${PIPELINE_CRITIC_MODEL:-${CRITIC_MODEL:-<known-good-default>}}`, then MUST refuse to run if the resolved value is empty OR matches the regex `^\$\{[A-Z_]+\}$` (a literal unset interpolation). The resolved value MUST be checked against the model allowlist in `CONFIG.md` BEFORE any JSON is built; on miss, the script MUST exit non-zero with the actionable message `CRITIC_MODEL unsupported on this endpoint — set PIPELINE_CRITIC_MODEL to one of: <allowlist>`. Every substitution site that puts the model into a JSON payload (the `node` argv on the request-builder line AND any future heredoc interpolations) MUST use the already-resolved shell variable, never `${CRITIC_MODEL}` or `${PIPELINE_CRITIC_MODEL}` directly. The assembled request body MUST be grepped for the pattern `\$\{[A-Z_]+\}` before `curl` sends it — any match is a hard fail with the message `literal ${VAR} leaked into JSON payload — fix substitution site`. |
-| Reasoning model returns empty on tight `max_tokens`               | M   | H   | Gate scripts set `max_tokens >= 4000`; first-JSON parser handles concatenated output.               |
-| `redb` native dep breaks `cargo test` on contributor machines     | L   | M   | Tied to redb 2.x wheels; CI matrix covers it; `tests/gate.sh` already runs `cargo test` everywhere. |
-| `trash` crate restore unsupported on Windows for some filesystems  | M   | L   | Documented in CLI help; `undo_last` returns `DomainError::Trash` with clear message.                |
-| Tauri v2 + egui WASM in same binary is an unusual combo            | M   | M   | Phase 5 starts with a build-spike commit before full UI work.                                       |
-| Ably requires online + API key; conflicts with offline-first       | M   | H   | Entire sync path is behind `sync` feature flag; defaults off; opt-in only with explicit consent.     |
-| Performance target (<2 s / 100k) not met on slow disks             | L   | H   | Phase 2 perf test is gating; `DISKSCOPE_SKIP_PERF=1` allowed but logged; revisit before MVP sign-off. |
-| `.gitignore` lets a `*.db` slip into a commit                     | L   | M   | `tests/review_gate.sh` checks `git status` before commit; `.gitignore` already excludes `*.db`.      |
-| `extract_phases` regex misses a phase heading                      | L   | H   | All headings use `## Phase N: Title` (single space); verified against the extractor.               |
-| `MAX_SUBCHUNKS=5` batches too aggressively                          | L   | M   | Each phase's deliverables list stays short (~6–12 bullets), well under the cap.                      |
-| Docker pre-flight unavailable → native deps missing                | M   | M   | Already non-fatal; documented in `pipeline.sh`. WebKit/GTK devs install system libs via package mgr. |
-
----
-
-## 6. Compliance Checklist (Gate 0 reviewer)
-
-- [ ] **Architecture** — Hexagonal: domain at center, adapters (scan-engine,
-      cli, gui) at edges, ports in `domain/ports.rs`.
-- [ ] **Domain deps** — `domain/Cargo.toml` has zero extern deps (preserved).
-- [ ] **Type safety** — `#![deny(clippy::all)]`, `#![deny(missing_docs)]`,
-      no `unwrap()` in non-test code; TS `strict: true` in `gui/web`.
-- [ ] **TDD** — Every phase lists its tests in `should <behavior> when
-      <condition>` form, in build order.
-- [ ] **Commits** — Conventional commits; one logical change per commit
-      (per phase's TDD cycle).
-- [ ] **Gates** — Each phase declares Gates Satisfied; Gate 1 (tests) on every
-      phase; Gate 2 (cross-model critic) on every phase; Gate 3 (visual/E2E)
-      on Phases 5 and 7.
-- [ ] **Design tokens** — All `gui/web` components consume only
-      `design-system/tokens.json` values.
-- [ ] **No paid deps** — All deps MIT/Apache-2.0 (rayon, jwalk, ignore, redb,
-- [ ] **Critic model resolvable** — `tests/review_gate.sh` resolves `CRITIC_MODEL` exactly once at the top via `${PIPELINE_CRITIC_MODEL:-${CRITIC_MODEL:-<known-good-default>}}`, refuses to run if the resolved value is empty or matches `^\$\{[A-Z_]+\}$`, and checks the resolved value against the `CONFIG.md` allowlist BEFORE any JSON is built (fail-fast with `CRITIC_MODEL unsupported on this endpoint — set PIPELINE_CRITIC_MODEL to one of: <allowlist>` on miss). Every substitution site that puts the model into the JSON payload uses the resolved shell variable (never `${CRITIC_MODEL}` / `${PIPELINE_CRITIC_MODEL}` raw), and the assembled request body is grepped for `\$\{[A-Z_]+\}` before `curl` — any match is a hard fail. No literal `${VAR}` interpolation ever reaches the provider.
-
-      trash, clap, tauri, react, vite, vitest, ably, notify — all OSS).
-- [ ] **Privacy** — No telemetry; sync is opt-in and behind feature flag.
-- [ ] **Offline-first** — Default build has zero network code; Ably compiled out
-      unless `--features sync`.
+- [x] Hexagonal — `domain` has **zero** external deps; ports are traits in
+  `domain`; adapters in `scan-engine`/`cli`/`gui`.
+- [x] Types — `#![deny(missing_docs)]`, `#![deny(clippy::all)]`, every
+  public symbol documented.
+- [x] No `unwrap()` in production paths — enforced by clippy +
+  `concise-code-comments`/`karpathy-guidelines` skills.
+- [x] TDD — every test listed above in build order; one
+  test → implement → refactor → commit.
+- [x] Tests as docs — `should <behavior> when <condition>` naming.
+- [x] Conventional commits, one logical change per commit.
+- [x] `.gitignore` updated as artifacts (redb, dist, node_modules) appear.
+- [x] No `any`/`unwrap` as a substitute for proper error handling — every
+  port returns `Result<T, DomainError>`; CLI boundary uses `anyhow`.
 
 ---
 
-## 7. Build Order Summary
+## Build Order (matches phase headings the pipeline parses)
 
-```
-Phase 1  Domain Core           → Gate 1 + Gate 2
-Phase 2  Scan Engine           → Gate 1 (incl. perf) + Gate 2
-Phase 3  CLI                   → Gate 1 + Gate 2
-Phase 4  GUI Backend (Tauri)   → Gate 1 + Gate 2
-Phase 5  GUI Frontend          → Gate 1 + Gate 2 + Gate 3
-Phase 6  Live Updates + Sync   → Gate 1 + Gate 2 (feature-flagged)
-Phase 7  Cross-Platform Release→ Gate 1 + Gate 2 + Gate 3
-```
+1. Phase 1: Workspace Scaffold + Domain Core
+2. Phase 2: Scan Engine Adapter
+3. Phase 3: CLI
+4. Phase 4: GUI (Tauri + React + egui treemap)
+5. Phase 5: Real-Time Sync (Ably) + Cross-Platform Packaging
 
-`pipeline.sh` runs each phase in turn with `extract_phases` driving the loop.
-Phase 6 may be skipped at MVP ship time if Ably credentials and infra are not
-ready — its code stays in the tree behind the feature flag for a later release.
-
----
-
-## 8. Out of Scope (re-stated for clarity)
-
-- Cloud storage scanning (S3 / GCS / Azure Blob).
-- RAID / volume management, file recovery, duplicate-file finder.
-- Cross-platform vision audit of screenshots (Gate 3 runs on host platform
-  only; macOS/Windows artifacts verified by build-success only).
-- Pro tier features (network drives, scheduled scans, team workspaces, hooks).
-
----
-
-*End of plan — awaiting Gate 0 review.*
+Each phase is independently buildable, testable, and reviewable.

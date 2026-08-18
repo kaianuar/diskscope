@@ -2,4 +2,14 @@
 name = "domain"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "DiskScope domain layer: pure-Rust entities and ports, zero runtime dependencies."
+
+[lib]
+name = "domain"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

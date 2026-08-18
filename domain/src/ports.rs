@@ -1,26 +1,72 @@
+//! DiskScope domain ports.
+//!
+//! Ports are the *interfaces* the domain exposes to the outside world.
+//! Adapters (`scan-engine`, future `cli` / `gui` consumers) implement
+//! these traits to bridge the pure domain with concrete systems: the
+//! filesystem, the OS trash, and an embedded cache.
+//!
+//! All ports are object-safe (`&self`-receivers, no associated types or
+//! generic methods), so they can be used as trait objects behind
+//! `Box<dyn Scanner>`, `Arc<dyn Trash>`, etc. — which is how the GUI /
+//! CLI compose the adapter implementations at runtime.
+
 use crate::{DomainError, ScanResult};
 
 // ── Scanner ──────────────────────────────────────────────────────────────
 
-/// Port for filesystem scanning. Implemented by adapters (scan-engine).
+/// Port for filesystem scanning.
+///
+/// Implementations walk a directory tree, classify entries, and report
+/// results back as a [`ScanResult`]. They are responsible for respecting
+/// `.gitignore`, parallelising the walk, and emitting progress if they
+/// so choose — the domain cares only about the final tree.
 pub trait Scanner {
+    /// Scan `path` and return its full tree.
+    ///
+    /// `path` is an absolute or scan-root-relative path string. Returns
+    /// [`DomainError::InvalidPath`] when the path is empty, malformed, or
+    /// not a directory; [`DomainError::PermissionDenied`] when the OS
+    /// refuses access; [`DomainError::Io`] for any other I/O failure.
     fn scan(&self, path: &str) -> Result<ScanResult, DomainError>;
 }
 
 // ── Trash ────────────────────────────────────────────────────────────────
 
-/// Port for safe delete with undo. Implemented by adapters (scan-engine via `trash` crate).
+/// Port for safe delete with undo.
+///
+/// Implementations move entries to the system trash (so the user can
+/// recover them) and record enough state to undo the most recent move.
+/// "Undo" is therefore a stack operation, not a general rewind.
 pub trait Trash {
+    /// Move `path` to the trash. Returns [`DomainError::PermissionDenied`]
+    /// or [`DomainError::Io`] on failure; on success, `path` becomes a
+    /// candidate for [`Trash::undo_last`].
     fn move_to_trash(&self, path: &str) -> Result<(), DomainError>;
+
+    /// Restore the most recently trashed entry. Returns
+    /// [`DomainError::InvalidPath`] with a "nothing to undo" message when
+    /// the undo stack is empty.
     fn undo_last(&self) -> Result<(), DomainError>;
 }
 
 // ── Cache ────────────────────────────────────────────────────────────────
 
-/// Port for scan result caching. Implemented by adapters (scan-engine via redb).
+/// Port for caching scan results.
+///
+/// Implementations are keyed by the scanned path string and store the
+/// full [`ScanResult`] plus whatever metadata is needed to decide
+/// whether a cache entry is still valid (mtime, size, etc.).
 pub trait Cache {
+    /// Look up `path` in the cache. Returns `Some(result)` on hit,
+    /// `None` on miss.
     fn get(&self, path: &str) -> Option<ScanResult>;
+
+    /// Persist `result` for `path`. Returns [`DomainError::Io`] on
+    /// backend failure.
     fn put(&self, path: &str, result: &ScanResult) -> Result<(), DomainError>;
+
+    /// Drop the cache entry for `path`. Returns [`DomainError::Io`] on
+    /// backend failure; succeeds silently when the key is absent.
     fn invalidate(&self, path: &str) -> Result<(), DomainError>;
 }
 
@@ -29,14 +75,20 @@ pub trait Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FileType, FileNode, ScanResult};
-    use std::collections::HashMap;
+    use crate::{FileNode, FileType};
     use std::cell::RefCell;
+    use std::collections::HashMap;
 
     // -- Mock Scanner --
 
     struct MockScanner {
         result: ScanResult,
+    }
+
+    impl MockScanner {
+        fn new(result: ScanResult) -> Self {
+            Self { result }
+        }
     }
 
     impl Scanner for MockScanner {
@@ -46,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn should_require_scan_method_when_scanner_trait_implemented() {
+    fn should_return_canned_scanresult_when_scanner_scan_called_via_mock() {
         let root = FileNode {
             path: "/test".into(),
             size: 100,
@@ -55,7 +107,7 @@ mod tests {
             children: vec![],
         };
         let result = ScanResult::from_tree(root, 10);
-        let scanner = MockScanner { result: result.clone() };
+        let scanner = MockScanner::new(result.clone());
 
         let scanned = scanner.scan("/test").unwrap();
         assert_eq!(scanned, result);
@@ -64,28 +116,25 @@ mod tests {
     // -- Mock Trash --
 
     struct MockTrash {
-        deleted: RefCell<Vec<String>>,
-        undo_stack: RefCell<Vec<String>>,
+        recorded: RefCell<Vec<String>>,
     }
 
     impl MockTrash {
         fn new() -> Self {
             Self {
-                deleted: RefCell::new(Vec::new()),
-                undo_stack: RefCell::new(Vec::new()),
+                recorded: RefCell::new(Vec::new()),
             }
         }
     }
 
     impl Trash for MockTrash {
         fn move_to_trash(&self, path: &str) -> Result<(), DomainError> {
-            self.deleted.borrow_mut().push(path.into());
-            self.undo_stack.borrow_mut().push(path.into());
+            self.recorded.borrow_mut().push(path.into());
             Ok(())
         }
 
         fn undo_last(&self) -> Result<(), DomainError> {
-            match self.undo_stack.borrow_mut().pop() {
+            match self.recorded.borrow_mut().pop() {
                 Some(_) => Ok(()),
                 None => Err(DomainError::InvalidPath("nothing to undo".into())),
             }
@@ -93,14 +142,27 @@ mod tests {
     }
 
     #[test]
-    fn should_require_move_to_trash_and_undo_last_when_trash_trait_implemented() {
+    fn should_record_path_when_trash_move_to_trash_called() {
         let trash = MockTrash::new();
+        trash.move_to_trash("/tmp/a.txt").unwrap();
+        trash.move_to_trash("/tmp/b.txt").unwrap();
+        assert_eq!(*trash.recorded.borrow(), vec!["/tmp/a.txt", "/tmp/b.txt"]);
+    }
 
-        trash.move_to_trash("/tmp/file.txt").unwrap();
-        assert_eq!(trash.deleted.borrow().len(), 1);
-
+    #[test]
+    fn should_pop_last_recorded_path_when_trash_undo_last_called() {
+        let trash = MockTrash::new();
+        trash.move_to_trash("/tmp/a.txt").unwrap();
+        trash.move_to_trash("/tmp/b.txt").unwrap();
         trash.undo_last().unwrap();
-        assert!(trash.undo_stack.borrow().is_empty());
+        assert_eq!(*trash.recorded.borrow(), vec!["/tmp/a.txt"]);
+    }
+
+    #[test]
+    fn should_return_invalid_path_error_when_trash_undo_last_called_on_empty_stack() {
+        let trash = MockTrash::new();
+        let result = trash.undo_last();
+        assert!(matches!(result, Err(DomainError::InvalidPath(_))));
     }
 
     // -- Mock Cache --
@@ -123,7 +185,9 @@ mod tests {
         }
 
         fn put(&self, path: &str, result: &ScanResult) -> Result<(), DomainError> {
-            self.entries.borrow_mut().insert(path.into(), result.clone());
+            self.entries
+                .borrow_mut()
+                .insert(path.into(), result.clone());
             Ok(())
         }
 
@@ -133,45 +197,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn should_return_cached_result_when_cache_get_called_with_known_path() {
-        let cache = MockCache::new();
+    fn sample_result(path: &str, size: u64) -> ScanResult {
         let root = FileNode {
-            path: "/cached".into(),
-            size: 512,
+            path: path.into(),
+            size,
             modified: 42,
             file_type: FileType::Directory,
             children: vec![],
         };
-        let result = ScanResult::from_tree(root, 5);
+        ScanResult::from_tree(root, 5)
+    }
 
+    #[test]
+    fn should_return_cached_scanresult_when_cache_get_called_with_known_key() {
+        let cache = MockCache::new();
+        let result = sample_result("/cached", 512);
         cache.put("/cached", &result).unwrap();
         let cached = cache.get("/cached");
         assert_eq!(cached, Some(result));
     }
 
     #[test]
-    fn should_invalidate_entry_when_cache_invalidate_called() {
+    fn should_return_none_when_cache_get_called_with_unknown_key() {
         let cache = MockCache::new();
-        let root = FileNode {
-            path: "/stale".into(),
-            size: 256,
-            modified: 99,
-            file_type: FileType::Directory,
-            children: vec![],
-        };
-        let result = ScanResult::from_tree(root, 3);
-
-        cache.put("/stale", &result).unwrap();
-        assert!(cache.get("/stale").is_some());
-
-        cache.invalidate("/stale").unwrap();
-        assert!(cache.get("/stale").is_none());
+        assert!(cache.get("/nonexistent").is_none());
     }
 
     #[test]
-    fn should_return_none_when_cache_get_called_with_unknown_path() {
+    fn should_evict_entry_when_cache_invalidate_called() {
         let cache = MockCache::new();
-        assert!(cache.get("/nonexistent").is_none());
+        let result = sample_result("/stale", 256);
+        cache.put("/stale", &result).unwrap();
+        assert!(cache.get("/stale").is_some());
+        cache.invalidate("/stale").unwrap();
+        assert!(cache.get("/stale").is_none());
     }
 }

@@ -1,15 +1,15 @@
 [package]
-name = "diskscope-gui"
+name = "scan-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "DiskScope GUI (Tauri + React + egui). Placeholder for Phase 1; real implementation in Phase 4."
+description = "DiskScope scan engine adapter. Placeholder for Phase 1; real implementation (jwalk/rayon/ignore/redb/trash) in Phase 2."
 
-[[bin]]
-name = "diskscope-gui"
-path = "src/main.rs"
+[lib]
+name = "scan_engine"
+path = "src/lib.rs"
 
 [dependencies]
 domain = { path = "../domain" }

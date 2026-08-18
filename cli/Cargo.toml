@@ -1,18 +1,19 @@
 [package]
-name = "diskscope-gui"
+name = "diskscope-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "DiskScope GUI (Tauri + React + egui). Placeholder for Phase 1; real implementation in Phase 4."
+description = "DiskScope CLI. Placeholder for Phase 1; real implementation (clap) in Phase 3."
 
 [[bin]]
-name = "diskscope-gui"
+name = "diskscope"
 path = "src/main.rs"
 
 [dependencies]
 domain = { path = "../domain" }
+scan-engine = { path = "../scan-engine" }
 
 [lints]
 workspace = true

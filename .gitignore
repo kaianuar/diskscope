@@ -8,7 +8,7 @@ __pycache__/
 venv/
 .env
 .env.*
-target/
+/target
 
 # databases / runtime state (NEVER commit live data or lock files)
 *.db
