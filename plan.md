@@ -50,6 +50,10 @@ flowchart LR
 | `cli`       | clap binary           | `domain`, `scan-engine`   |
 | `gui`       | Tauri+React+egui bin  | `domain`, `scan-engine`   |
 
+> **Workspace shape:** requirements.md states "3 crates (scan-engine, gui, cli)";
+> we split the pure domain layer into its own crate to enforce hexagonal
+> isolation (zero external deps, ports as traits). The "3 crates" in the
+> requirements refers to the *adapter* crates.
 **Critical paths**
 - Scan: `GUI/CLI → scan_engine::Scanner::scan → jwalk+rayon+ignore → ScanResult`
 - Delete: `GUI/CLI → scan_engine::Trash::move_to_trash → trash crate`
@@ -144,10 +148,10 @@ Plus filters/sort/output formats/incremental scan. CLI/GUI don't exist yet —
 this phase is exercised by **integration tests** against a real temp
 directory tree.
 
-### Deliverables
 - `scan-engine/Cargo.toml`: deps `jwalk`, `rayon`, `ignore`, `redb`,
-  `trash`, `walkdir` (fallback), `serde` + `serde_json`, `thiserror`,
-  `tempfile` (dev).
+  `trash`, `walkdir` (fallback: single-threaded walk used only when
+  `RAYON_NUM_THREADS=1` is explicitly set), `serde` + `serde_json`,
+  `thiserror`, `tempfile` (dev).
 - `scan-engine/src/scanner.rs`:
   - `pub struct JwalkScanner` impl `Scanner` — parallel walk via `jwalk`,
     respecting `ignore::gitignore` rules, fills `ScanResult`.
@@ -170,7 +174,10 @@ directory tree.
   Jsonl, Tree }` + `pub fn render(result: &ScanResult, fmt: OutputFormat,
   out: &mut dyn Write)`.
 - `scan-engine/src/lib.rs`: re-exports + the `pub struct ScanService` that
-  composes Scanner + Cache + Filter + Formatter for use by cli/gui.
+  composes `Scanner` + `Cache` + `Filter` + `Formatter` for use by cli/gui.
+  Doc comment: *ScanService is a convenience composition of scan-engine
+  adapters (adapter-layer wiring), used by CLI/GUI binaries; domain logic
+  stays in `domain::*` traits.*
 - `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()` in prod.
 - Update `.gitignore` for any cache files the engine writes to temp dirs.
 
@@ -287,7 +294,8 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
   - `cancel_scan(scan_id: ScanId) -> ()`
   - `delete_paths(paths: Vec<String>) -> ()`
   - `undo_last_delete() -> ()`
-  - `reveal_in_explorer(path: String) -> ()` (cross-platform via `opener`/`xdg-open`/`start`).
+  - `reveal_in_explorer(path: String) -> ()` (cross-platform via the
+    `opener` crate v5.x, which handles platform detection internally).
 - `gui/src-tauri/src/scan_runner.rs`: background-thread scan that streams
   progress via Tauri events (`scan-progress`, `scan-done`) so UI stays
   responsive.
@@ -445,6 +453,12 @@ Packaging (Gate 1 / smoke):
 - [x] `.gitignore` updated as artifacts (redb, dist, node_modules) appear.
 - [x] No `any`/`unwrap` as a substitute for proper error handling — every
   port returns `Result<T, DomainError>`; CLI boundary uses `anyhow`.
+- [x] Anyhow boundary — `anyhow` is used **only** in `cli/src/main.rs`
+  (CLI boundary); all library code (`domain`, `scan-engine`, `gui`)
+  returns typed `Result<T, DomainError>`. No leakage.
+- [x] TypeScript strictness — `gui/web/tsconfig.json` has
+  `strict: true`, `noImplicitAny: true`; no `// @ts-ignore` without
+  justification; ESLint `@typescript-eslint/no-explicit-any` enabled.
 
 ---
 
