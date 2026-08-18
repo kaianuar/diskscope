@@ -438,6 +438,7 @@ for PHASE in "${PHASES[@]}"; do
         echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
         log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
         for i in "${!deliverables[@]}"; do
+          echo "  [DEBUG] loop i=$i of ${#deliverables[@]}"
           d="${deliverables[$i]}"
           # Extract file path from backtick-quoted name (e.g. "`foo/bar.rs` -- desc" -> "foo/bar.rs")
           file_hint=$(echo "$d" | grep -oE '`[^`]+`' | head -1 | tr -d '`' || true)
@@ -445,6 +446,7 @@ for PHASE in "${PHASES[@]}"; do
           echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
           log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
           set +e; run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."; set -e
+          echo "  [DEBUG] run_omp returned $? for deliverable $((i+1))"
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
       else
