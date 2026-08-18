@@ -1,6 +1,11 @@
 [workspace]
-members = ["scan-engine", "cli", "gui"]
 resolver = "2"
+members = [
+    "domain",
+    "scan-engine",
+    "cli",
+    "gui",
+]
 
 [workspace.package]
 version = "0.1.0"

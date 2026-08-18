@@ -7,8 +7,3 @@ license.workspace = true
 [[bin]]
 name = "diskscope"
 path = "src/main.rs"
-
-[dependencies]
-scan-engine = { path = "../scan-engine" }
-clap = { version = "4", features = ["derive"] }
-clap_complete = "4"

@@ -32,7 +32,7 @@ fi
 # from CRITIC_MODEL to avoid collision with .env). .env may define CRITIC_MODEL
 # (stale values like z-ai/glm-5.2). The pipeline prefix always wins.
 CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-${CRITIC_MODEL:-mimo-v2.5-pro}}"
-CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-300}"
+CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-600}"
 CRITIC_MAX_TOKENS="${CRITIC_MAX_TOKENS:-16000}"
 CRITIC_STANDARD="${CRITIC_STANDARD:-production}"
 CRITIC_REQUIREMENTS="${CRITIC_REQUIREMENTS:-requirements.md}"

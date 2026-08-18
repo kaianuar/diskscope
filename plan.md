@@ -1,384 +1,286 @@
-# DiskScope — Implementation Plan
+# DiskScope Implementation Plan
 
-## Architecture Overview
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Binary Crates                      │
-│  ┌──────────┐   ┌─────────────────────────────────────┐ │
-│  │   cli    │   │                gui                   │ │
-│  └────┬─────┘   │  ┌──────────┐  ┌────────────────┐   │ │
-│       │         │  │  React   │  │  egui canvas   │   │ │
-│       │         │  │  (chrome)│  │  (treemap)     │   │ │
-│       │         │  └────┬─────┘  └───────┬────────┘   │ │
-│       │         └───────┼────────────────┼────────────┘ │
-│       └────────┬────────┘                │              │
-│                │                         │              │
-│  ┌─────────────▼─────────────────────────▼──────────┐   │
-│  │              scan-engine (library)                │   │
-│  │  ┌──────────┐  ┌─────────┐  ┌────────────────┐  │   │
-│  │  │ domain   │  │ walker  │  │ cache (redb)   │  │   │
-│  │  │ (pure)   │  │ (jwalk) │  │                │  │   │
-│  │  └──────────┘  └─────────┘  └────────────────┘  │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    gui (Tauri)                        │
+│  ┌────────────────┐  ┌──────────────────────────┐  │
+│  │ React (chrome)  │  │ egui (canvas/treemap)    │  │
+│  └────────┬───────┘  └────────────┬─────────────┘  │
+│           └───────────┬───────────┘                  │
+│                       │ IPC / commands               │
+├───────────────────────┼─────────────────────────────┤
+│                       │                              │
+├───────────────────────┼─────────────────────────────┤
+│                  scan-engine (lib)                    │
+│  ┌────────────────────┴──────────────────────────┐  │
+│  │ parallel walker (jwalk) │ cache (redb)        │  │
+│  │ rayon pool              │ filters             │  │
+│  │ incremental scan        │ trash integration   │  │
+│  └────────────────────┬──────────────────────────┘  │
+│                       │                              │
+├───────────────────────┼─────────────────────────────┤
+│                   domain (pure)                      │
+│  FileNode │ ScanResult │ Filter │ SortSpec │ Trash  │
+└─────────────────────────────────────────────────────┘
 ```
 
-**Workspace crates:** `scan-engine` (lib), `gui` (bin), `cli` (bin)
+**Workspace crates:**
+- `domain` — pure types + logic, zero external deps
+- `scan-engine` — parallel scanner, caching, trash; depends on `domain`
+- `cli` — CLI binary; depends on `scan-engine`
+- `gui` — Tauri v2 binary; depends on `scan-engine`
 
 ---
 
-## Phase 1: Domain Core (`scan-engine` — pure domain layer)
+## Phase 1: Domain Core
 
-**Goal:** Pure Rust types and logic with zero external dependencies. Everything else builds on this.
+> **Goal**: Pure Rust domain with zero external dependencies. All types, validation, and business rules. Independently testable without I/O.
 
 ### Deliverables
-
-- `scan-engine/src/domain/mod.rs` — module re-exports
-- `scan-engine/src/domain/node.rs` — `FileNode` struct:
-  - `name: String`, `path: PathBuf`, `size: u64`, `modified: SystemTime`
-  - `kind: NodeKind` (File | Directory | Symlink)
-  - `children: Vec<FileNode>` (directories only)
-  - `extension()` → `Option<&str>`, `file_type()` → `FileType` (audio/video/image/doc/code/archive/other)
-  - `total_size()` → recursive sum for directories
-- `scan-engine/src/domain/tree.rs` — `FileTree`:
-  - `root: FileNode`, `total_size: u64`, `file_count: usize`, `dir_count: usize`
-  - `flatten()` → `Vec<&FileNode>` (DFS order)
-  - `by_extension()` → `HashMap<String, Vec<&FileNode>>`
-  - `top_n(n: usize)` → largest N entries
-- `scan-engine/src/domain/filter.rs` — `Filter` enum:
-  - `MinSize(u64)`, `MaxSize(u64)`
-  - `FileType(FileType)`, `Extension(String)`
-  - `ModifiedBefore(SystemTime)`, `ModifiedAfter(SystemTime)`
-  - `NamePattern(Regex)`, `MaxDepth(usize)`
-  - `apply(&self, &FileNode) -> bool`
-  - `FilterSet(Vec<Filter>)` — all-match combinator
-- `scan-engine/src/domain/mod.rs` — `FileType` enum with `from_extension(&str) -> FileType`
+1. `FileNode` — path, size (u64), modified (u64 epoch), file type enum, children
+2. `ScanResult` — root `FileNode`, total size, file count, scan duration
+3. `Filter` — size range, file type set, age range, name glob pattern, depth limit
+4. `SortSpec` — column enum (Name, Size, Modified, Type), direction (Asc, Desc)
+5. `FileType` enum — Audio, Video, Image, Document, Code, Archive, Directory, Other; `from_extension()` classification
+6. `format_size(bytes) -> String` — human-readable (B, KB, MB, GB, TB)
+7. Domain error type (`DomainError`) — invalid path, invalid filter, permission denied
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should classify extensions correctly when mapping from extension string |
-| 2 | should compute recursive total_size when node is directory with nested children |
-| 3 | should return empty vec when flatten called on single-file tree |
-| 4 | should group files by extension when by_extension called on mixed tree |
-| 5 | should return N largest files when top_n called with n < file_count |
-| 6 | should filter by min size when filter node with size below threshold |
-| 7 | should filter by file type when filter node is audio file |
-| 8 | should filter by date range when filter node modified outside range |
-| 9 | should filter by depth when filter node exceeds max depth |
-| 10 | should combine filters (all-match) when FilterSet contains multiple criteria |
+- `should classify .mp3 as Audio when from_extension called`
+- `should classify .rs as Code when from_extension called`
+- `should classify unknown extension as Other when from_extension called`
+- `should format 1024 as "1.0 KB" when format_size called`
+- `should format 0 as "0 B" when format_size called`
+- `should format 1_073_741_824 as "1.0 GB" when format_size called`
+- `should reject negative size range when Filter validated`
+- `should reject empty name pattern when Filter validated`
+- `should sort descending by size when SortSpec direction is Desc`
+- `should compute total size recursively when ScanResult built from tree`
+- `should respect depth limit when Filter applied to FileNode tree`
 
 ### Gates
-
-- **Gate 1** — All unit tests pass (`cargo test -p scan-engine`)
-- **Gate 2** — Zero `unsafe`, zero external deps in domain module; review confirms domain purity
+- Gate 0: plan review ✓
+- Gate 1: unit tests pass ✓
 
 ---
 
-## Phase 2: Scan Engine Adapters (walker + cache)
+## Phase 2: Scan Engine
 
-**Goal:** Parallel filesystem walking, incremental caching, and output formatting.
+> **Goal**: Parallel directory scanner with caching and trash integration. All I/O lives here.
 
 ### Deliverables
-
-- `scan-engine/src/walker.rs` — `Scanner`:
-  - `new(root: &Path, config: ScanConfig) -> Self`
-  - `ScanConfig`: `respect_gitignore: bool`, `follow_symlinks: bool`, `max_depth: Option<usize>`
-  - `scan() -> Result<FileTree>` — parallel walk via `jwalk` + `rayon`
-  - `scan_incremental(cache: &Cache) -> Result<FileTree>` — skip unchanged files (mtime + size match)
-  - Build `FileTree` bottom-up from walk results
-- `scan-engine/src/cache.rs` — `Cache`:
-  - `open(path: &Path) -> Result<Self>` — redb embedded DB
-  - `store(&self, tree: &FileTree) -> Result<()>` — persist snapshot
-  - `load(&self) -> Result<FileTree>` — restore last snapshot
-  - `is_stale(&self, entry: &FileNode) -> bool` — mtime/size diff check
-  - Schema: table `entries` keyed by path, value = `{size, mtime, kind}`
-- `scan-engine/src/output.rs` — `OutputFormat` enum:
-  - `Json`, `Jsonl`, `Table`, `Tree`
-  - `format(&self, tree: &FileTree, filters: &FilterSet) -> Result<String>`
-  - Table: tabwriter-aligned; Tree: indented ASCII art
-- `scan-engine/src/lib.rs` — public API: `Scanner`, `Cache`, `FileTree`, `Filter`, `FilterSet`, `OutputFormat`, `ScanConfig`
+1. `Scanner` — `scan(root: &Path, config: ScanConfig) -> Result<ScanResult, ScanError>`
+   - Parallel walk via `jwalk` + `rayon` thread pool
+   - Respects `.gitignore` via `ignore` crate
+   - Applies `Filter` during walk (skip early, don't collect then filter)
+2. `Cache` — `redb` embedded DB; keyed by `(path, mtime, size)`; incremental re-scan
+3. `TrashService` — `trash::delete(path)`, `trash::list()`, `trash::restore(id)`
+   - Uses `trash` crate (cross-platform)
+4. `ScanConfig` — root path, filter, max depth, cache enabled, follow symlinks
+5. `ScanError` — wraps `DomainError` + I/O errors (permission, not found, broken symlink)
+6. `Progress` — callback channel: `(files_scanned, current_path)` for UI updates
+7. JSON / JSONL / table / tree output formatters on `ScanResult`
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should scan directory and return correct file count when walking a flat directory |
-| 2 | should scan nested directories recursively when max_depth is None |
-| 3 | should respect max_depth when scan config specifies depth limit |
-| 4 | should respect .gitignore when respect_gitignore is true |
-| 5 | should skip unchanged files when incremental scan matches cache mtime+size |
-| 6 | should rescan stale files when incremental scan detects mtime change |
-| 7 | should persist and restore tree when cache store then load |
-| 8 | should output valid JSON when format is Json |
-| 9 | should output indented tree when format is Tree |
-| 10 | should apply filters to output when filter set is non-empty |
-| 11 | should complete scan of 100k synthetic files in <2 seconds on CI hardware |
+- `should scan directory recursively when Scanner.scan called`
+- `should skip .gitignore entries when scan respects gitignore config`
+- `should respect filter by file type when Filter includes only Code`
+- `should respect filter by size range when Filter specifies min_bytes`
+- `should return cached result when file mtime unchanged and cache enabled`
+- `should update cache entry when file modified since last scan`
+- `should delete file to trash when TrashService.delete called`
+- `should list trashed items when TrashService.list called`
+- `should restore file from trash when TrashService.restore called with valid id`
+- `should emit progress events during scan when callback provided`
+- `should handle permission denied gracefully when scan encounters unreadable dir`
+- `should format as JSON when OutputFormat::Json requested`
+- `should format as tree when OutputFormat::Tree requested`
+- `should complete 100k files in <2s when scanning modern SSD` *(performance gate)*
 
 ### Gates
-
-- **Gate 1** — All unit + integration tests pass (`cargo test -p scan-engine`)
-- **Gate 2** — Review confirms: no blocking I/O on main thread; rayon parallelism verified; redb schema stable; no unwrap in public API
-- **Gate 0** — Architecture review: hexagonal boundaries clean, domain has zero dep leakage from adapters
+- Gate 0: TDD plan review ✓
+- Gate 1: unit + integration tests pass ✓
 
 ---
 
-## Phase 3: CLI Binary
+## Phase 3: CLI
 
-**Goal:** Fully functional CLI that exercises the scan engine with all output formats and filters.
+> **Goal**: Fully functional CLI binary. Scannable, filterable, deletable — no GUI dependency.
 
 ### Deliverables
-
-- `cli/src/main.rs` — `clap`-based CLI:
-  - `diskscope scan <PATH> [--format table|json|jsonl|tree] [--min-size] [--max-size] [--type] [--depth] [--pattern] [--no-gitignore]`
-  - `diskscope summary <PATH>` — quick stats: total size, file count, top 10 by size, breakdown by type
-  - `diskscope cache <PATH>` — show/manage cache (path, age, entry count)
-  - `diskscope completions <shell>` — generate shell completions (bash/zsh/fish/powershell)
-- Progress bar during scan (via `indicatif`)
-- Exit codes: 0 success, 1 scan error, 2 invalid args
+1. `diskscope scan [path] --format table|json|jsonl|tree [--min-size] [--max-size] [--type] [--pattern] [--depth]`
+2. `diskscope summary <path>` — quick total size + top-10 largest items
+3. `diskscope trash list` / `diskscope trash restore <id>`
+4. `diskscope completions <shell>` — bash/zsh/fish completions (via `clap`)
+5. `--no-cache` flag, `--no-gitignore` flag
+6. `clap` derive CLI with colored help, version, error display
+7. `Ctrl+C` graceful cancel (propagates to scanner)
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should output table format when --format table specified |
-| 2 | should output JSON when --format json specified |
-| 3 | should filter by min-size when --min-size 1MB specified |
-| 4 | should show summary with top 10 when summary subcommand used |
-| 5 | should generate valid completions when completions bash specified |
-| 6 | should exit with code 2 when invalid path provided |
-| 7 | should show progress bar when scanning directory with >1000 files |
+- `should print table output when --format table specified`
+- `should print JSON when --format json specified`
+- `should exit 0 when scan completes successfully`
+- `should exit 1 when path does not exist`
+- `should print top 10 largest when summary called`
+- `should filter by --type audio when flag passed`
+- `should generate completions for bash when completions bash requested`
+- `should cancel cleanly on SIGINT when scan in progress`
 
 ### Gates
-
-- **Gate 1** — All tests pass; `cargo test -p cli` + manual smoke test
-- **Gate 2** — Review: clap derive usage clean, error messages user-friendly, no panics on bad input
+- Gate 0: plan review ✓
+- Gate 1: tests pass ✓
+- Gate 2: adversarial code review ✓
 
 ---
 
-## Phase 4: GUI — Tauri + React Shell
+## Phase 4: GUI — Tauri Shell + React Chrome
 
-**Goal:** Desktop app with React chrome (sidebar, toolbar, status bar) and Tauri IPC bridge to scan engine.
+> **Goal**: Tauri v2 app with React frontend. Window, routing, state, IPC skeleton. No egui canvas yet.
 
 ### Deliverables
-
-- `gui/` — Tauri v2 project scaffold:
-  - `gui/src-tauri/` — Rust backend with Tauri commands:
-    - `scan(path: String, config: ScanConfig) -> Result<ScanResult, String>`
-    - `scan_incremental(path: String) -> Result<ScanResult, String>`
-    - `apply_filters(tree_id: String, filters: Vec<Filter>) -> Result<ScanResult, String>`
-    - `delete_entries(paths: Vec<String>) -> Result<DeleteResult, String>` — move to trash
-    - `undo_delete(trash_ids: Vec<String>) -> Result<(), String>`
-    - `get_cache_info(path: String) -> Result<CacheInfo, String>`
-  - `gui/src/` — React + TypeScript + Vite:
-    - `App.tsx` — layout: sidebar (tree view) + main (treemap/table) + status bar
-    - `components/Toolbar.tsx` — scan controls, format toggle, filter bar
-    - `components/TreeView.tsx` — expandable directory tree (name, size, %)
-    - `components/Statusbar.tsx` — scan progress, file count, total size
-    - `hooks/useScan.ts` — Tauri command wrappers with loading/error state
-    - `lib/types.ts` — TypeScript mirrors of Rust domain types
-    - `lib/format.ts` — size formatting (B/KB/MB/GB), date formatting
-  - Auto-update: Tauri updater configured
-  - Window: 1200×800 default, min 800×600, title "DiskScope"
+1. Tauri v2 project with `tauri.conf.json` (window size, title, bundle config)
+2. React 18 + TypeScript + Vite frontend
+3. Tauri IPC commands: `start_scan`, `get_scan_state`, `cancel_scan`, `trash_delete`, `trash_restore`
+4. React state management for scan lifecycle (idle → scanning → complete → error)
+5. Scan progress bar + file counter (binds to `Progress` channel)
+6. Sidebar: drive/volume selector + recent scans
+7. Top bar: breadcrumb path + filter controls
+8. Settings page: cache path, gitignore toggle, theme
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should return scan results when scan command invoked with valid path |
-| 2 | should return error when scan command invoked with invalid path |
-| 3 | should move files to trash when delete_entries command invoked |
-| 4 | should restore files when undo_delete command invoked |
-| 5 | should display tree view with correct hierarchy when scan results loaded |
-| 6 | should update status bar when scan progress changes |
-| 7 | should toggle between tree and table view when format toggle clicked |
+- `should display scan progress when start_scan IPC called`
+- `should transition to complete state when scan finishes`
+- `should show error state when scan path invalid`
+- `should cancel scan when cancel_scan IPC called during active scan`
+- `should persist filter settings when user changes filter controls`
 
 ### Gates
-
-- **Gate 1** — `cargo build -p gui` succeeds; `npm run build` in `gui/` succeeds; TypeScript type-checks clean
-- **Gate 3** — Manual E2E: launch app, scan home directory, verify tree view renders, status bar updates
+- Gate 0: plan review ✓
+- Gate 1: tests pass ✓
+- Gate 2: adversarial code review ✓
 
 ---
 
-## Phase 5: GUI — egui Treemap & Interactivity
+## Phase 5: GUI — Treemap + Tree/Table View
 
-**Goal:** Interactive treemap visualization, context menus, keyboard navigation, and safe delete with undo.
+> **Goal**: Interactive visualization. Treemap canvas (egui via Tauri) and sortable table.
 
 ### Deliverables
-
-- `gui/src-tauri/src/treemap/` — egui treemap renderer:
-  - `layout.rs` — squarified treemap algorithm (input: `&FileTree`, output: `Vec<TreemapRect>`)
-  - `render.rs` — egui painting: colored rectangles by file type, labels on hover, click to zoom
-  - `interaction.rs` — click-to-drill-down, breadcrumb navigation, right-click context menu
-- `gui/src-tauri/src/commands.rs` — extend Tauri commands:
-  - `navigate_to(path: String) -> Result<ScanResult, String>` — drill into subdirectory
-  - `navigate_up() -> Result<ScanResult, String>`
-  - `copy_path(path: String) -> Result<(), String>` — clipboard
-  - `open_in_explorer(path: String) -> Result<(), String>` — native file manager
-- `gui/src/components/Treemap.tsx` — egui canvas wrapper:
-  - Mount egui in Tauri webview (via tauri-plugin-egui or custom bridge)
-  - Keyboard: Arrow keys navigate, Enter drills down, Backspace goes up, Delete moves to trash
-  - Cmd/Ctrl+Z undoes last delete
-- `gui/src/components/FilterPanel.tsx`:
-  - Size range slider, file type checkboxes, date range picker, name pattern input
-  - Real-time filter application (debounced 300ms)
-- Color scheme by file type: video=blue, image=green, audio=purple, code=orange, archive=red, doc=yellow, other=gray
+1. egui treemap component — `egui_extras` treemap; clickable rectangles, hover tooltip (name, size, %), click to zoom
+2. Table view — sortable columns (name, size, modified, type); virtual scroll for >10k rows
+3. View toggle: treemap ↔ table ↔ split
+4. Selection sync: selecting in treemap highlights in table and vice versa
+5. Right-click context menu: open in file explorer, copy path, copy size
+6. Keyboard navigation: arrows, enter (drill down), backspace (drill up), delete (trash)
+7. `Cmd/Ctrl+Z` undo — restores last trashed item
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should produce non-overlapping rectangles when squarified layout applied to tree |
-| 2 | should drill down when treemap cell clicked and node is directory |
-| 3 | should navigate up when backspace pressed at subdirectory level |
-| 4 | should move to trash when delete pressed on selected file |
-| 5 | should undo delete when cmd+z pressed after delete |
-| 6 | should open native file manager when "Open in Explorer" selected from context menu |
-| 7 | should apply size filter when slider changed and update treemap |
-| 8 | should filter by file type when checkbox toggled |
-| 9 | should copy path to clipboard when "Copy Path" selected from context menu |
-| 10 | should resize treemap correctly when window resized |
+- `should render treemap rectangles when scan data present`
+- `should zoom into subdirectory when treemap rectangle clicked`
+- `should sort by size descending when Size column header clicked`
+- `should navigate up when backspace pressed at subdirectory level`
+- `should move to trash when delete key pressed on selected item`
+- `should undo last trash when Cmd+Z pressed`
+- `should sync selection between treemap and table when item selected in either`
 
 ### Gates
-
-- **Gate 1** — All layout + interaction tests pass
-- **Gate 3** — Visual E2E: treemap renders with correct proportions; drill-down, filter, delete, undo all functional; keyboard navigation works; context menu appears on right-click
+- Gate 0: plan review ✓
+- Gate 1: tests pass ✓
+- Gate 2: adversarial code review ✓
+- Gate 3: visual + functional E2E (Playwright + vision model) ✓
 
 ---
 
 ## Phase 6: Real-time Sync (Ably)
 
-**Goal:** Multi-device scan result sync with live updates and conflict resolution.
+> **Goal**: Multi-device scan sync. Offline-first with sync-when-online.
 
 ### Deliverables
-
-- `scan-engine/src/sync.rs` — sync domain types:
-  - `SyncEvent` enum: `ScanUpdate { path, tree }`, `DeleteEvent { paths }`, `FilterChange { filters }`
-  - `SyncConfig`: `ably_api_key: String`, `channel_prefix: String`, `device_id: String`
-- `gui/src-tauri/src/sync.rs` — Ably adapter:
-  - `SyncManager::new(config: SyncConfig) -> Result<Self>`
-  - `publish(&self, event: SyncEvent) -> Result<()>`
-  - `subscribe(&self, callback: impl Fn(SyncEvent)) -> Result<Subscription>`
-  - `resolve_conflict(local: SyncEvent, remote: SyncEvent) -> SyncEvent` — last-write-wins by timestamp
-  - Channel naming: `diskscope:{user_id}:{device_group}`
-- `gui/src/hooks/useSync.ts`:
-  - Connect/disconnect Ably on app start/stop
-  - Incoming events update local state
-  - Outgoing events published on scan completion, delete, filter change
-- `gui/src-tauri/src/commands.rs` — extend:
-  - `configure_sync(config: SyncConfig) -> Result<(), String>`
-  - `get_sync_status() -> Result<SyncStatus, String>` (connected, last sync, peer count)
+1. Ably channel per scan (keyed by `(device_id, scan_path_hash)`)
+2. Scan result diff → publish on change; subscribe on other devices
+3. Last-write-wins conflict resolution (timestamp)
+4. Offline queue: pending diffs buffered, flushed on reconnect
+5. UI indicator: sync status (connected / syncing / offline)
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should publish scan update when scan completes and sync is configured |
-| 2 | should apply remote scan update when received via subscription |
-| 3 | should resolve conflict using last-write-wins when two devices update same path |
-| 4 | should update peer count when device connects/disconnects |
-| 5 | should gracefully degrade when Ably connection lost (queue locally, retry) |
+- `should publish scan diff when local scan completes`
+- `should apply remote diff when received on subscribed device`
+- `should resolve conflict with last-write-wins when concurrent edits detected`
+- `should buffer diffs offline when Ably disconnected`
+- `should flush buffered diffs when connection restored`
 
 ### Gates
-
-- **Gate 1** — Sync unit tests pass (mocked Ably transport)
-- **Gate 2** — Review: no API keys in source, offline-first verified (app works without sync configured), conflict resolution correct
+- Gate 0: plan review ✓
+- Gate 1: tests pass ✓
+- Gate 2: adversarial code review ✓
+- Gate 3: visual + functional E2E ✓
 
 ---
 
-## Phase 7: Packaging & Distribution
+## Phase 7: Packaging & CI/CD
 
-**Goal:** Cross-platform installers, code signing, auto-update.
+> **Goal**: Cross-platform builds, code signing, auto-update. Artifacts ready for distribution.
 
 ### Deliverables
-
-- `.github/workflows/release.yml` — triggered on tag push (`v*`):
-  - Matrix: linux (ubuntu-latest), macos (macos-latest), windows (windows-latest)
-  - Linux: `.AppImage`, `.deb`, `.rpm`, `.tar.gz`
-  - macOS: universal binary (x86_64 + aarch64), `.dmg`, notarized
-  - Windows: `.msi`, portable `.exe`
-  - Upload artifacts to GitHub Release
-- `.github/workflows/ci.yml` — on push/PR:
-  - `cargo test --workspace`
-  - `cargo clippy --workspace -- -D warnings`
-  - `cargo fmt --check`
-  - `npm run lint` + `npm run typecheck` in `gui/`
-- Code signing:
-  - macOS: Developer ID certificate (via `APPLE_SIGNING_IDENTITY` secret)
-  - Windows: EV certificate (via `WINDOWS_CERTIFICATE` secret)
-- Tauri auto-update: configured with update endpoint pointing to GitHub Releases
-- `INSTALL.md` — per-platform install instructions (generated from CI artifacts)
+1. GitHub Actions workflow: build + test on Linux, macOS, Windows
+2. Artifacts: `.dmg` (macOS universal), `.msi` (Windows), `.AppImage` + `.deb` + `.rpm` + `.tar.gz` (Linux)
+3. Tauri auto-update: configured with update endpoint
+4. Code signing: macOS Developer ID, Windows EV cert (secrets in CI)
+5. Release workflow: tag → build → sign → upload → publish
 
 ### Tests
-
-| # | Test |
-|---|------|
-| 1 | should produce .AppImage on ubuntu-latest when release workflow runs |
-| 2 | should produce .dmg on macos-latest when release workflow runs |
-| 3 | should produce .msi on windows-latest when release workflow runs |
-| 4 | should pass all gates (test + clippy + fmt) when CI runs on PR |
-| 5 | should trigger auto-update when new version published and app checks for updates |
+- `should produce valid AppImage when Linux build completes`
+- `should produce signed DMG when macOS build completes`
+- `should produce MSI installer when Windows build completes`
+- `should trigger auto-update when new version published`
 
 ### Gates
+- Gate 0: plan review ✓
+- Gate 1: all platform builds pass ✓
 
-- **Gate 1** — CI green on all platforms; release matrix produces all artifacts
-- **Gate 3** — E2E on each platform: install from artifact, launch, scan, delete, verify auto-update prompt
+---
+
+## Risk Register
+
+| Risk | Mitigation |
+|------|-----------|
+| egui treemap in Tauri is non-trivial (embedding) | Prototype in Phase 5; fallback to pure React treemap |
+| `jwalk` + `ignore` crate interaction on symlinks | Explicit test coverage; follow_symlinks opt-in only |
+| `trash` crate inconsistency across Linux distros | Test on Ubuntu, Fedora, Arch; document limitations |
+| Ably SDK Rust support immature | Evaluate `ably-rs` crate early; fallback to REST API |
+| Scan performance <2s for 100k files | Benchmark early in Phase 2; tune rayon thread count |
+| macOS code signing CI complexity | Start with unsigned builds; signing in Phase 7 only |
 
 ---
 
 ## Gate Summary
 
-| Gate | Criteria | Applied In |
-|------|----------|------------|
-| **Gate 0** | Plan review — architecture, risk assessment, TDD plan | Before Phase 1 |
-| **Gate 1** | All tests pass (unit + integration) | Every phase |
-| **Gate 2** | Adversarial code review (different model) | Phases 2, 4, 6 |
-| **Gate 3** | Visual + functional E2E | Phases 4, 5, 7 |
+| Gate | Criteria | Phases |
+|------|----------|--------|
+| Gate 0 | Architecture review, TDD plan, risk assessment | 1–7 |
+| Gate 1 | Unit + integration tests pass | 1–7 |
+| Gate 2 | Adversarial code review (different model) | 3–6 |
+| Gate 3 | Visual + functional E2E (Playwright + vision) | 5–6 |
 
 ---
 
-## Dependencies & Risks
-
-| Risk | Mitigation |
-|------|------------|
-| `jwalk` performance on network drives | Phase 2 benchmark; fallback to sequential walk if needed |
-| egui in Tauri webview — plugin maturity | Prototype in Phase 4; fallback: pure canvas + JS treemap |
-| Ably free tier limits (6k msg/min) | Batch sync events; debounced publish; offline queue |
-| macOS notarization latency | CI caches notarization; test in staging before release |
-| Windows EV cert availability | Procure cert early; HSM-backed signing in CI |
-
----
-
-## TDD Commitment
-
-Every phase writes tests **before** implementation:
-1. Define test cases from acceptance criteria
-2. Write failing tests
-3. Implement minimum code to pass
-4. Refactor with green suite
-5. Gate 2 review on non-trivial phases
-
----
-
-## Phase Dependencies
+## Dependencies Between Phases
 
 ```
 Phase 1 (Domain)
-    │
-    ├──► Phase 2 (Scan Engine) ──► Phase 3 (CLI)
-    │                                 │
-    └──► Phase 4 (GUI Shell) ────────┘
-              │
-              ▼
-         Phase 5 (Treemap)
-              │
-              ▼
-         Phase 6 (Sync)
-              │
-              ▼
-         Phase 7 (Packaging)
+    ↓
+Phase 2 (Scan Engine)
+    ↓
+Phase 3 (CLI) ← can start once Phase 2 done
+Phase 4 (GUI Shell) ← can start once Phase 2 done (parallel with CLI)
+    ↓
+Phase 5 (GUI Visualization) ← after Phase 4
+    ↓
+Phase 6 (Sync) ← after Phase 5
+    ↓
+Phase 7 (Packaging) ← after Phase 5 minimum; after Phase 6 for full release
 ```
 
-Phases 3 and 4 can proceed in parallel after Phase 2.
+Phases 3 and 4 can proceed in parallel after Phase 2 completes.
