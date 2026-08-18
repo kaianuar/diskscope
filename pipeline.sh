@@ -40,7 +40,7 @@
 # =============================================================================
 set -uo pipefail
 
-BUILDER_MODEL="${BUILDER_MODEL:-xiaomi-token-plan-sgp/mimo-v2.5-pro}"
+BUILDER_MODEL="${BUILDER_MODEL:-MiniMaxAI/MiniMax-M3}"
 MAX_PLAN_ROUNDS="${MAX_PLAN_ROUNDS:-5}"
 MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-8}"
 FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"

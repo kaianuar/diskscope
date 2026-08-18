@@ -30,11 +30,11 @@ if [ ! -f "$GUIDELINES_FILE" ]; then
 fi
 
 # Load OpenRouter key (second .env load removed — already loaded at line 15)
-CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-mimo-v2.5-pro}"
-CRITIC_URL="https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
-CRITIC_API_KEY="${XIAOMI_API_KEY:-}"
+CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-deepseek/deepseek-v4-pro}"
+CRITIC_URL="https://api.commandcode.ai/provider/v1/chat/completions"
+CRITIC_API_KEY="${COMMANDCODE_API_KEY:-}"
 if [ -z "$CRITIC_API_KEY" ]; then
-  echo "xx XIAOMI_API_KEY not set. Add to .env (Xiaomi key)"
+  echo "xx COMMANDCODE_API_KEY not set. Add to .env (CommandCode key)"
   exit 1
 fi
 
@@ -289,7 +289,7 @@ cat > /tmp/build_request.js << 'NODEEOF'
 const fs = require('fs');
 const prompt = fs.readFileSync('/tmp/gate0_prompt_final.txt', 'utf8');
 const payload = {
-  model: 'mimo-v2.5-pro',
+  model: '${CRITIC_MODEL}',
   messages: [{ role: 'user', content: prompt }],
   max_tokens: 64000,
   temperature: 0.2

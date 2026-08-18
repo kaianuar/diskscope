@@ -31,26 +31,26 @@ fi
 # CRITIC_MODEL: the pipeline passes its choice as PIPELINE_CRITIC_MODEL (separate
 # from CRITIC_MODEL to avoid collision with .env). .env may define CRITIC_MODEL
 # (stale values like z-ai/glm-5.2). The pipeline prefix always wins.
-CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-${CRITIC_MODEL:-mimo-v2.5-pro}}"
+CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-${CRITIC_MODEL:-deepseek/deepseek-v4-pro}}"
 CRITIC_TIMEOUT="${CRITIC_TIMEOUT:-600}"
 CRITIC_MAX_TOKENS="${CRITIC_MAX_TOKENS:-16000}"
 CRITIC_STANDARD="${CRITIC_STANDARD:-production}"
 CRITIC_REQUIREMENTS="${CRITIC_REQUIREMENTS:-requirements.md}"
 REVIEW_HISTORY_FILE="${REVIEW_HISTORY_FILE:-/tmp/review_history.txt}"
 REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}"
-CRITIC_URL="${CRITIC_URL:-https://token-plan-sgp.xiaomimimo.com/v1/chat/completions}"
+CRITIC_URL="${CRITIC_URL:-https://api.commandcode.ai/provider/v1/chat/completions}"
 
 echo "==> GATE 2: adversarial review (critic=${CRITIC_MODEL}, standard=${CRITIC_STANDARD}, timeout=${CRITIC_TIMEOUT}s, max_tokens=${CRITIC_MAX_TOKENS})"
 
 # Xiaomi MiMo key — read from the environment (which we just loaded from .env).
 # Do NOT fall back to ~/.hermes/.env: a cloned repo sets up its provider key in
 # the project's .env, not in Hermes's file.
-CRITIC_API_KEY="${XIAOMI_API_KEY:-${CRITIC_API_KEY:-}}"
+CRITIC_API_KEY="${COMMANDCODE_API_KEY:-${CRITIC_API_KEY:-}}"
 if [ -z "$CRITIC_API_KEY" ]; then
-  echo "xx XIAOMI_API_KEY not set. Add it to $PROJ_ROOT/.env with the Xiaomi key."
+  echo "xx COMMANDCODE_API_KEY not set. Add to .env (CommandCode key)"
   exit 1
 fi
-[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using XIAOMI_API_KEY from the environment"
+[ "${REVIEW_DEBUG:-0}" = "1" ] && echo ">> using COMMANDCODE_API_KEY from the environment"
 
 if [ ! -s "$DIFF_FILE" ]; then
   echo "!! No diff (${DIFF_FILE} empty). Pass a path to the diff."
