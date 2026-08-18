@@ -438,15 +438,15 @@ for PHASE in "${PHASES[@]}"; do
         echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
         log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
         for i in "${!deliverables[@]}"; do
-          echo "  [DEBUG] loop i=$i of ${#deliverables[@]}"
           d="${deliverables[$i]}"
           # Extract file path from backtick-quoted name (e.g. "`foo/bar.rs` -- desc" -> "foo/bar.rs")
           file_hint=$(echo "$d" | grep -oE '`[^`]+`' | head -1 | tr -d '`' || true)
           desc=$(echo "$d" | sed 's/`[^`]*`[[:space:]]*--[[:space:]]*//')
           echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
           log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
+          echo "  [$(date +%H:%M:%S)] building [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}..."
           set +e; run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."; set -e
-          echo "  [DEBUG] run_omp returned $? for deliverable $((i+1))"
+          echo "  [$(date +%H:%M:%S)] done [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc} ($?)"
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
       else
@@ -454,7 +454,9 @@ for PHASE in "${PHASES[@]}"; do
         dl_list=$(printf '  - %s\n' "${deliverables[@]}")
         echo "==> [phase] implementing ${#deliverables[@]} deliverables (batched) for ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "batched: ${#deliverables[@]} deliverables"
+        echo "  [$(date +%H:%M:%S)] building ${#deliverables[@]} deliverables..."
         set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} Do NOT edit plan.md. Do not implement future phases."; set -e
+        echo "  [$(date +%H:%M:%S)] done batched ($?)"
       fi
     else
       FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"
