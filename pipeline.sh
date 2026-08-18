@@ -63,6 +63,11 @@ hash_of() {  # sha256 prefix of a file (or N/A if missing) - used to spot stale 
   [ -f "$1" ] && sha256sum "$1" | cut -c1-12 || echo "N/A(no-file)"
 }
 
+# ERR trap: catch unexpected failures under set -e, log them, and CONTINUE.
+# Without this, any grep/sed/awk returning non-zero under set -e kills the
+# pipeline with no error message. The trap returns 0 so bash continues.
+trap 'echo "xx [pipeline] ERR at ${BASH_SOURCE[0]}:${LINENO}: exit=$? cmd=${BASH_COMMAND}" >&2; log_int "PIPELINE" "ERR" "$LINENO" "exit=$? cmd=${BASH_COMMAND}"; true' ERR
+
 PROJ_ROOT="$(pwd)"
 
 # Present any outstanding NON-BLOCKING (P2/P3/P4) review findings collected across
