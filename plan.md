@@ -54,6 +54,18 @@ flowchart LR
 > we split the pure domain layer into its own crate to enforce hexagonal
 > isolation (zero external deps, ports as traits). The "3 crates" in the
 > requirements refers to the *adapter* crates.
+
+**Architecture justification**
+- **Rust** over Go/C++/Zig: memory safety + zero-cost abstractions for the
+  parallel-scan hot path (requirement: 100k files <2 s, <200 MB).
+- **Tauri v2** over Electron: smaller binary, less memory (constraint).
+- **Hexagonal** isolation: domain testable with zero external deps; adapters
+  (`scan-engine`, `cli`, `gui`) swappable behind ports (requirement: domain
+  pure, adapters at edges).
+- **egui** for the treemap: immediate-mode canvas rendering suited to
+  canvas-heavy views; WASM-in-webview risk mitigated by the documented
+  Canvas2D fallback with explicit go/no-go gate (Phase 4).
+
 **Critical paths**
 - Scan: `GUI/CLI → scan_engine::Scanner::scan → jwalk+rayon+ignore → ScanResult`
 - Delete: `GUI/CLI → scan_engine::Trash::move_to_trash → trash crate`
@@ -175,9 +187,10 @@ directory tree.
   out: &mut dyn Write)`.
 - `scan-engine/src/lib.rs`: re-exports + the `pub struct ScanService` that
   composes `Scanner` + `Cache` + `Filter` + `Formatter` for use by cli/gui.
-  Doc comment: *ScanService is a convenience composition of scan-engine
-  adapters (adapter-layer wiring), used by CLI/GUI binaries; domain logic
-  stays in `domain::*` traits.*
+  Doc comment: *ScanService is the single entry point for CLI/GUI access to
+  scan-engine — consumers never instantiate individual adapters directly.
+  It is a convenience composition of scan-engine adapters (adapter-layer
+  wiring); domain logic stays in `domain::*` traits.*
 - `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()` in prod.
 - Update `.gitignore` for any cache files the engine writes to temp dirs.
 
@@ -301,6 +314,8 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
   responsive.
 - `gui/web/`:
   - `package.json`, `vite.config.ts`, `tsconfig.json` (strict),
+    `.eslintrc.json` (`@typescript-eslint/no-explicit-any: error`,
+    `@typescript-eslint/no-unused-vars: error`),
   - `index.html`, React 18 entry, design tokens imported from
     `design-system/tokens.json` (no hard-coded colors / spacing),
   - `src/main.tsx`, `src/App.tsx`,
@@ -311,6 +326,11 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
     `TableView.tsx` (sortable columns: name, size, modified, type),
     `ContextMenu.tsx` (open in explorer, copy path, copy relative path),
     `StatusBar.tsx`.
+  - egui-WASM go/no-go gate: after the first successful WASM-egui
+    integration, measure (a) binary size delta >10 MB, (b) treemap render
+    time >100 ms for 10k nodes, or (c) build-time increase >60 s. If any
+    trigger fires, switch to pure Canvas2D with the `treemap-layout` pure
+    function. Chosen route is documented in the Phase 4 commit message.
   - `src/hooks/useScan.ts`, `useSelection.ts`, `useShortcuts.ts`
     (arrows/enter/backspace/Delete/Cmd/Ctrl+Z).
   - `src/ipc.ts`: typed wrapper around `invoke()` for the Tauri commands.

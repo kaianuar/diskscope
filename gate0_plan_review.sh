@@ -30,7 +30,7 @@ if [ ! -f "$GUIDELINES_FILE" ]; then
 fi
 
 # Load OpenRouter key (second .env load removed — already loaded at line 15)
-CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-deepseek/deepseek-v4-pro}"
+CRITIC_MODEL="${PIPELINE_CRITIC_MODEL:-xiaomi/mimo-v2.5-pro}"
 CRITIC_URL="https://api.commandcode.ai/provider/v1/chat/completions"
 CRITIC_API_KEY="${COMMANDCODE_API_KEY:-}"
 if [ -z "$CRITIC_API_KEY" ]; then

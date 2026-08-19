@@ -513,7 +513,7 @@ for PHASE in "${PHASES[@]}"; do
       break
     fi
     set +e
-    REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}" PIPELINE_CRITIC_MODEL="${CRITIC_MODEL:-deepseek/deepseek-v4-pro}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
+    REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}" PIPELINE_CRITIC_MODEL="${CRITIC_MODEL:-xiaomi/mimo-v2.5-pro}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
     C_EC=${PIPESTATUS[0]}
     set -e
     log_int "PHASE" "GATE2" "${PHASE}" "critic rc=${C_EC} verdict=$(tail -1 /tmp/review_verdict.txt 2>/dev/null | tr -d '[:space:]') P1=$(grep -E '\[P1\]|^- \[P1\]' /tmp/review_verdict.txt 2>/dev/null | wc -l)"
