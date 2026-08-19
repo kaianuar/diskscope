@@ -60,13 +60,13 @@ jobs:
         with:
           name: diskscope-${{ matrix.platform }}-${{ matrix.args || 'default' }}
           path: |
-            gui/target/release/bundle/deb/*.deb
-            gui/target/release/bundle/appimage/*.AppImage
-            gui/target/release/bundle/rpm/*.rpm
-            gui/target/release/bundle/dmg/*.dmg
-            gui/target/release/bundle/msi/*.msi
-            gui/target/release/bundle/nsis/*.exe
-          if-no-files-found: ignore
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
 
   build-cli:
     strategy:
