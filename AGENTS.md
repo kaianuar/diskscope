@@ -67,12 +67,29 @@ The repo follows Andrej Karpathy's coding principles + Ponytail style (originall
 11. **Naming** — files kebab-case, types/interfaces PascalCase (prefer `interface` for objects), functions/vars camelCase, constants UPPER_SNAKE_CASE, boolean predicates `is...`/`has...`/`can...`.
 12. **Single responsibility + composition over inheritance** — one reason to change per module; prefer composition/interfaces over class hierarchies.
 
-## Testing
+## Testing & TDD
 
-- **Rust:** `cargo test` (domain 34, cli 10, scan-engine). Tests use `should_<behavior>_when_<condition>` naming.
-- **Frontend:** `npx vitest run` (14 tests, components + hooks). Tests in `src/**/__tests__/`.
-- **E2E:** Playwright specs in `tests/e2e/` (self-contained, run against `localhost:5173` dev server; `BASE_URL` env to override).
-- **CLI behavior:** verify manually against real dirs — sizes must match `du -sb`, no duplicate root rows, `--quiet` must keep output (these were the historical bug classes).
+**TDD is mandatory** — test written FIRST (RED), then implementation (GREEN), then refactor:
+
+```
+1. WRITE TEST (RED)     → Write failing test for the next behavior
+2. IMPLEMENT (GREEN)    → Minimal code to make test pass
+3. REFACTOR             → Clean up, extract, optimize (tests stay green)
+4. COMMIT               → One logical change = one commit
+```
+
+- **One TDD cycle = one commit** (or a small batch of tightly related cycles). No "test later" — the test comes before the implementation.
+- Test naming: `should_<behavior>_when_<condition>` (Rust) / `it('should <behavior> when <condition>')` (TS).
+- **AAA pattern** — Arrange, Act, Assert clearly separated.
+- One assertion per test (or logically grouped).
+- Deterministic — no flaky tests, no time-based flakiness, no external dependencies in unit tests.
+- Unit tests fast + isolated (no I/O); integration tests real (DB/API), clearly separated.
+- Coverage: >80% on domain logic, 100% on critical paths.
+
+**Rust:** `cargo test` (domain 34, cli 10, scan-engine). Tests use `should_<behavior>_when_<condition>` naming.
+**Frontend:** `npx vitest run` (14 tests, components + hooks). Tests in `src/**/__tests__/`.
+**E2E:** Playwright specs in `tests/e2e/` (self-contained, run against `localhost:5173` dev server; `BASE_URL` env to override).
+**CLI behavior:** verify manually against real dirs — sizes must match `du -sb`, no duplicate root rows, `--quiet` must keep output (these were the historical bug classes).
 
 ## Build & Run
 
@@ -109,7 +126,29 @@ Note: `--min-size`/`--max-size` take **raw bytes**, not human strings ("100MB" f
 
 ## Workflow Rules
 
-- Commit with conventional messages (`fix(scope):`, `feat(scope):`); the repo uses `--no-verify` on commits by convention (pre-commit hooks are unreliable here)
+**Commit conventions (Conventional Commits):**
+
+| Type | When to use |
+|---|---|
+| `feat:` | New feature for user |
+| `fix:` | Bug fix |
+| `refactor:` | Code restructuring, no behavior change |
+| `test:` | Adding/updating tests |
+| `docs:` | Documentation only |
+| `chore:` | Maintenance (deps, config, CI) |
+| `perf:` | Performance improvement |
+
+Format: `type(scope): imperative description` — e.g. `feat(gui): add breadcrumb navigation`, `fix(scan-engine): correct directory size double-count`.
+
+**When to commit:**
+- **One logical change = one commit.** Small, focused commits — not "everything at end of session".
+- A TDD cycle (test + implementation + refactor) = one commit, or a small batch of tightly related cycles.
+- Commit when: a feature works, a bug is fixed, a refactor is done, or a doc/tests change is complete — i.e. at each meaningful milestone, not per-keystroke and not at the end of a long stretch.
+- Don't commit broken intermediate states (unless the commit message says so, e.g. `chore: WIP`).
+- Push after each logical commit or small batch — don't accumulate a huge unpushed stack.
+
+**House rules:**
+- The repo uses `--no-verify` on commits by convention (pre-commit hooks are unreliable here)
 - Default branch: `feat/phase1-domain-core`
 - Verify with `tsc --noEmit` + `npm run build` + `npx vitest run` for frontend, `cargo test` for Rust, before finishing
 - Do NOT add omp-agent pipeline files (gate scripts, plan.md, requirements.md, ponytail.yaml) — they were intentionally removed
