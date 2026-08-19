@@ -268,6 +268,7 @@ impl From<DomainError> for CommandErrorDto {
             DomainError::PermissionDenied(p) => Self::PermissionDenied(p),
             DomainError::InvalidFilter(m) => Self::InvalidFilter(m),
             DomainError::Io(io) => Self::Io(io.to_string()),
+            DomainError::Unsupported(msg) => Self::Io(msg),
         }
     }
 }

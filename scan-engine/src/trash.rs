@@ -7,12 +7,11 @@
 //! entry. macOS is supported for `move_to_trash` (which goes through
 //! Finder) but the `os_limited` module that powers `undo_last` is not
 //! available on macOS — calls to `undo_last` on macOS return
-//! [`DomainError::Io`] with a clear message.
+//! [`DomainError::Unsupported`] with a clear message.
 
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use trash::os_limited;
 use trash::TrashItem;
 use domain::DomainError;
 
@@ -56,24 +55,20 @@ impl domain::ports::Trash for TrashBin {
             // the actual decision to the `trash` crate.
         }
 
-        // Best-effort: try to snapshot the trash BEFORE deleting so we
-        // can match the new entry by path. On macOS, `os_limited`
-        // listing is unavailable; we silently skip the snapshot,
-        // meaning future `undo_last` calls return an explicit error.
+        // Snapshot the trash before deleting so we can match the new
+        // entry by path. On macOS the os_limited list API is
+        // unavailable; we skip undo tracking in that case.
         let snapshot_before: Option<Vec<TrashItem>> =
-            os_limited::list().ok().map(|v| v.into_iter().collect());
+            list_trash().ok().map(|v| v.into_iter().collect());
 
         // Perform the deletion.
         trash::delete(path).map_err(trash_err)?;
-        let items_after = os_limited::list().map_err(trash_err)?;
 
-        // Strategy: find items not in `snapshot_before` whose
-        // `original_path` matches `path`. If snapshot is empty (first
-        // call ever), match any item whose original_path matches.
-        let target = std::path::Path::new(path);
-        let trash_item = items_after
-            .into_iter()
-            .find(|item| {
+        // Try to record the TrashItem for undo. This requires
+        // os_limited listing, which is unavailable on macOS.
+        if let Ok(items_after) = list_trash() {
+            let target = std::path::Path::new(path);
+            if let Some(trash_item) = items_after.into_iter().find(|item| {
                 if item.original_path() != target {
                     return false;
                 }
@@ -81,18 +76,14 @@ impl domain::ports::Trash for TrashBin {
                     Some(before) => !before.iter().any(|b| b.id == item.id),
                     None => true,
                 }
-            })
-            .ok_or_else(|| {
-                DomainError::Io(std::io::Error::other(format!(
-                    "trash entry not found after delete for {path}"
-                )))
-            })?;
-
-        let mut stack = self.undo_stack.lock();
-        stack.push(UndoEntry {
-            original_path: path.to_string(),
-            trash_item,
-        });
+            }) {
+                let mut stack = self.undo_stack.lock();
+                stack.push(UndoEntry {
+                    original_path: path.to_string(),
+                    trash_item,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -110,15 +101,39 @@ impl domain::ports::Trash for TrashBin {
 
         // Restore the item. If restore fails for any reason, push the
         // entry back onto the stack so the user can retry.
-        if let Err(e) = os_limited::restore_all(vec![entry.trash_item.clone()]) {
+        if let Err(e) = restore_items(vec![entry.trash_item.clone()]) {
             let mut stack = self.undo_stack.lock();
             stack.push(entry);
-            return Err(trash_err(e));
+            return Err(e);
         }
         Ok(())
     }
 }
 
 fn trash_err(e: trash::Error) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn list_trash() -> Result<Vec<trash::TrashItem>, DomainError> {
+    trash::os_limited::list().map_err(trash_err)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restore_items(items: Vec<trash::TrashItem>) -> Result<(), DomainError> {
+    trash::os_limited::restore_all(items).map_err(trash_err)
+}
+
+#[cfg(target_os = "macos")]
+fn list_trash() -> Result<Vec<trash::TrashItem>, DomainError> {
+    Err(DomainError::Unsupported(
+        "trash listing is not available on macOS".into(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn restore_items(_items: Vec<trash::TrashItem>) -> Result<(), DomainError> {
+    Err(DomainError::Unsupported(
+        "trash restore-by-item is not available on macOS".into(),
+    ))
 }

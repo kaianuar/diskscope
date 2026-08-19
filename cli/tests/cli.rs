@@ -137,6 +137,10 @@ fn should_print_to_stderr_and_exit_2_when_no_path_given() {
 
 /// Remove every `TrashItem` whose original path lives under `root`
 /// (restoring it to its original location). Returns the number restored.
+///
+/// Note: `trash::os_limited` is cfg-gated OUT on macOS (the trash crate only
+/// exposes it on Windows/Linux) — so on macOS this helper is a no-op.
+#[cfg(not(target_os = "macos"))]
 fn cleanup_trash_under(root: &Path) -> usize {
     let items = match trash::os_limited::list() {
         Ok(v) => v,
@@ -151,6 +155,11 @@ fn cleanup_trash_under(root: &Path) -> usize {
         let _ = trash::os_limited::restore_all(ours);
     }
     count
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_trash_under(_root: &Path) -> usize {
+    0 // trash crate has no os_limited on macOS
 }
 
 #[test]
@@ -168,11 +177,15 @@ fn should_move_file_to_trash_when_delete_invoked_against_a_real_file() {
     assert!(!target.exists(), "file should be gone from origin");
 
     // And present in the system trash, keyed by its original path.
-    let items = trash::os_limited::list().expect("list trash");
-    let in_trash = items
-        .iter()
-        .any(|it| it.original_path() == target);
-    assert!(in_trash, "file should be present in trash");
+    // (macOS: the trash crate doesn't expose os_limited::list, so skip.)
+    #[cfg(not(target_os = "macos"))]
+    {
+        let items = trash::os_limited::list().expect("list trash");
+        let in_trash = items
+            .iter()
+            .any(|it| it.original_path() == target);
+        assert!(in_trash, "file should be present in trash");
+    }
 
     cleanup_trash_under(dir.path());
 }

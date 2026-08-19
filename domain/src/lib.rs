@@ -131,6 +131,8 @@ pub enum DomainError {
     /// An underlying I/O error from an adapter. Carries the source error
     /// so callers can downcast to `io::Error` for `ErrorKind` inspection.
     Io(io::Error),
+    /// An operation that is not supported on the current platform.
+    Unsupported(String),
 }
 
 impl fmt::Display for DomainError {
@@ -140,6 +142,7 @@ impl fmt::Display for DomainError {
             Self::InvalidFilter(msg) => write!(f, "invalid filter: {msg}"),
             Self::PermissionDenied(msg) => write!(f, "permission denied: {msg}"),
             Self::Io(err) => write!(f, "io error: {err}"),
+            Self::Unsupported(msg) => write!(f, "unsupported: {msg}"),
         }
     }
 }
@@ -168,6 +171,7 @@ impl PartialEq for DomainError {
             // Compare io::Error by Display string — the inner fields of
             // io::Error are not part of its public API for PartialEq.
             (Self::Io(a), Self::Io(b)) => a.to_string() == b.to_string(),
+            (Self::Unsupported(a), Self::Unsupported(b)) => a == b,
             _ => false,
         }
     }
