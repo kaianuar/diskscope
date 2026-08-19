@@ -25,8 +25,9 @@ ignore = "0.4"
 # Embedded cache
 redb = "4.2"
 
-# Cross-platform move-to-trash
-trash = { version = "5.2", default-features = false }
+# Cross-platform move-to-trash. Use default features — the crate's defaults
+# (coinit_apartmentthreaded + chrono) enable `os_limited` on all platforms.
+trash = "5.2"
 
 # Serialization for JSON output formats only
 serde = { version = "1.0", features = ["derive"] }
