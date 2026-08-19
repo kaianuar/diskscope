@@ -53,7 +53,16 @@ flowchart LR
 > **Workspace shape:** requirements.md states "3 crates (scan-engine, gui, cli)";
 > we split the pure domain layer into its own crate to enforce hexagonal
 > isolation (zero external deps, ports as traits). The "3 crates" in the
-> requirements refers to the *adapter* crates.
+> requirements refers to the *adapter* crates. This reconciliation is
+> restated in the root `Cargo.toml` package description and README so
+> reviewers don't misread `domain` as an adapter crate.
+
+> **Pinned versions (GUIDELINES floor):** Tauri v2.1, React 18.3,
+> TypeScript 5.5, Vite 6.0, egui 0.31 + egui_extras, rayon 1.10, jwalk 0.6,
+> ignore 0.4, redb 2.1, clap 4.5, trash 4.0, ably 1.0 (feature-gated).
+> `Cargo.lock` is committed; `cargo` may resolve newer semver-compatible
+> releases (e.g. current lockfile has redb 4.2, trash 5.2, jwalk 0.9).
+> Where the plan cites a crate without a version, it means "as locked".
 
 **Architecture justification**
 - **Rust** over Go/C++/Zig: memory safety + zero-cost abstractions for the
@@ -170,21 +179,40 @@ directory tree.
   - `pub struct JwalkScanner` impl `Scanner` — parallel walk via `jwalk`,
     respecting `ignore::gitignore` rules, fills `ScanResult`.
   - Incremental: when `Cache::get(path)` returns a hit AND root mtime/size
-    unchanged → reuse; else rescan subtree; persist results.
+    unchanged → reuse; else rescan subtree; persist results. Cache entry
+    expiry is governed by a named constant `CACHE_TTL_SECS = 3600`
+    (module-level, `u64`); entries older than the TTL are treated as a miss
+    and rescanned. TTL applies to the whole entry — there is no per-subtree
+    expiry; this is deliberate (single-key-per-root invalidation) and
+    documented in the `cache.rs` module doc.
   - Cache keys are canonicalized: absolute, trailing separator stripped
-    (dedupe `./`/`..`), so `foo/` ≡ `foo`; case preserved per-platform.
+    (dedupe `./`/`..`), so `foo/` ≡ `foo`. Case normalization is
+    **platform-dependent and explicit**: on Windows/macOS (case-insensitive
+    FS) the canonical key is lowercased (`to_lowercase`); on Linux it is
+    preserved. The rule lives in one `canonicalize_key(path)` function so
+    case-variant paths never produce distinct keys on case-insensitive FS
+    (which would defeat invalidation).
+  - **Dependency injection:** `JwalkScanner`/`RedbCache`/`TrashBin` are
+    never referenced by name in `cli`/`gui`. Those binaries depend only on
+    the `domain::ports` traits (`Scanner`, `Cache`, `Trash`) and receive a
+    concrete `ScanService` (adapter-layer composition) injected at startup
+    — keeps the domain←adapter dependency arrow clean in code.
     Permissions/symlink errors are recorded in `ScanResult::skipped`, never
     fatal.
 - `scan-engine/src/cache.rs`:
-  - `pub struct RedbCache` impl `Cache` using `redb` 2.x embedded DB
-    (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`).
+  - `pub struct RedbCache` impl `Cache` using `redb` embedded DB
+    (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`),
+    plus the `CACHE_TTL_SECS` constant above.
   - `invalidate(path)` removes the key (and any child prefixes via range
     delete — exact prefix scan needed for rescan correctness).
   - **Multi-process safety (CLI + GUI concurrent):** redb allows one writer
     per DB file, so the cache is opened write-once with exclusive ownership;
     on `lock_error`, reopen read-only (cache reads still work, writes are
-    skipped for that session) and surface a non-fatal notice. Undo journal
-    (Phase 2) uses the same policy.
+    skipped for that session). The write-skip is **never silent**: the
+    session surfaces a typed `DomainError::CacheUnavailable` once, which
+    the CLI prints to stderr (exit code unchanged) and the GUI shows as a
+    toast/log line in the status bar. Undo journal (Phase 2) uses the same
+    policy.
 - `scan-engine/src/trash.rs`:
   - `pub struct TrashBin` impl `Trash` backed by `trash` crate; maintains
     a **persisted undo journal** (same redb file) of
@@ -210,9 +238,11 @@ directory tree.
 Unit:
 - `should skip node_modules when Scanner::scan hits a .gitignored path`.
 - `should walk in parallel when Scanner::scan given a wide tree` (count
-  threads spawned via env var `RAYON_NUM_THREADS=2` and assert parallelism
-  via timing on a synthetic 50k-file tree).
-- `should reuse cached scan when root mtime unchanged within TTL`.
+  threads spawned via env var `RAYON_NUM_THREADS=2`; **asserted via a
+  thread-count/`AtomicUsize` probe in the walk callback, not wall-clock** —
+  timing assertions are inherently flaky on CI; marked `#[ignore]` and run
+  as a `--release` perf smoke).
+- `should reuse cached scan when root mtime unchanged within CACHE_TTL_SECS`.
 - `should rescan subtree when root mtime changed`.
 - `should return hit when Cache::get called for known path`.
 - `should return miss when Cache::get called after invalidate`.
@@ -241,7 +271,9 @@ Unit / integration additions (review findings):
   half the files`.
 - `should detect new files when incremental scan re-runs after adding files`.
 - `should keep memory under 200 MB when Scanner::scan runs against 100k
-  synthetic files` (best-effort: rss sample before/after).
+  synthetic files` (best-effort: rss sample before/after; performance
+  constants named `SCAN_TARGET_FILES = 100_000`, `SCAN_TARGET_MS = 2000`,
+  `SCAN_MAX_RSS_MB = 200` in `scan-engine`).
 
 ### Gates satisfied
 - **Gate 1:** `cargo test -p scan-engine` green (unit + integration).
