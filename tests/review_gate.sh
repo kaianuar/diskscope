@@ -95,6 +95,58 @@ const historyBlock = esc(history);
 const reqBlock = esc(req);
 const diffBlock = esc(diff);
 const ledgerBlock = esc(ledger||'(no open issues yet)');
+// ---- CONTEXT SNIPPETS: inject the source around each diff hunk (not whole files).
+// The diff shows what CHANGED but not the surrounding code, so the critic's FIX
+// lines often reference functions whose full bodies/callers are invisible.
+// Pulling a ~50-line window around each hunk gives the critic the exact context
+// to write precise FIX lines (signature + call sites) without bloating the prompt.
+let refFiles='';
+try {
+  const seen=new Set();
+  for (const line of diff.split('\n')) {
+    const m=line.match(/^\+\+\+ b\/(.+)$/);
+    if (m && m[1] && m[1]!=='/dev/null') {
+      const clean=m[1].replace(/^a\//,'');
+      if (seen.has(clean)) continue; seen.add(clean);
+      refFiles+='\n===== FILE: '+clean+' =====\n';
+      const p=process.cwd()+'/'+clean;
+      if (!fs.existsSync(p) || !fs.statSync(p).isFile()) { refFiles+='(file not on disk)\n'; continue; }
+      const content=fs.readFileSync(p,'utf8').split('\n');
+      // Parse hunk headers from the diff to find where changes are in the NEW file.
+      // Hunks belong to the most recent +++/--- file header before them.
+      const hunks=[];
+      const diffLines=diff.split('\n');
+      let curFile='';
+      for (let i=0;i<diffLines.length;i++){
+        const l=diffLines[i];
+        if (l.startsWith('+++ b/')) curFile=l.slice(6);
+        else if (l.startsWith('@@ ')){
+          // @@ -old,oldcount +new,newcount @@ — capture BOTH new position and span
+          const hm=l.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+          if (hm && curFile===m[1]) hunks.push({ pos:Number(hm[3]), span:Number(hm[4]||1) });
+        }
+      }
+      if (hunks.length===0){
+        refFiles+=(content.slice(0,60).join('\n'))+'\n...(first 60 lines)\n';
+      } else {
+        for (const {pos,span} of hunks){
+          // For a big hunk (whole-file change), sample start/middle/end so the
+          // critic sees the whole structure. For small hunks, one window suffices.
+          const centers = span>200
+            ? [pos, pos+Math.floor(span/2), Math.min(content.length-1, pos+span-1)]
+            : [span>100 ? pos+Math.floor(span/2) : pos];
+          for (const center of centers){
+            const start=Math.max(0,center-20);
+            const end=Math.min(content.length,center+30);
+            refFiles+='\n--- around line '+center+' (diff hunk, span '+span+' lines) ---\n'+content.slice(start,end).join('\n')+'\n';
+          }
+        }
+      }
+    }
+  }
+  if (refFiles) refFiles='\n\nSOURCE CONTEXT AROUND EACH DIFF HUNK (read this to write precise FIX lines —\nreference exact function signatures and call sites visible here):\n'+refFiles;
+} catch(e){ refFiles=''; }
+const refBlock = esc(refFiles);
 // scope-aware severity instruction
 const scope = standard==='mvp'
   ? `GRADING (MVP standard): Use strict judgement. A real correctness or security defect MUST be FAIL.
@@ -178,7 +230,7 @@ End with a SINGLE final line that is PASS if there are NO P0 or P1 findings, els
 Verbatim: if any P0/P1 finding exists, the last line is exactly "FAIL". Otherwise it is exactly "PASS".
 
 DIFF:
-${diffBlock}`;
+${diffBlock}${refBlock}`;
 process.stdout.write(JSON.stringify({
   model,
   messages:[{role:'user',content:prompt}],
