@@ -14,6 +14,19 @@ import { Sidebar } from './components/Sidebar';
 import { FilterPanel } from './components/FilterPanel';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
+import { Breadcrumb } from './components/Breadcrumb';
+
+// Quick-scan shortcuts: OS-aware home dir + root.
+function homeQuickPaths(): { label: string; path: string }[] {
+  const home =
+    (typeof process !== 'undefined' && process.env?.HOME) ||
+    (typeof process !== 'undefined' && process.env?.USERPROFILE) ||
+    '';
+  const paths: { label: string; path: string }[] = [];
+  if (home) paths.push({ label: 'Home', path: home });
+  paths.push({ label: 'Root', path: '/' });
+  return paths;
+}
 
 export function App() {
   const scan = useScan();
@@ -23,6 +36,9 @@ export function App() {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter | undefined>(undefined);
   const [ctxMenu, setCtxMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
+  const [histIndex, setHistIndex] = useState(-1);
+  const quickPaths = useMemo(homeQuickPaths, []);
 
   const currentEntries = useMemo(() => {
     const root = scan.result?.root ?? null;
@@ -43,11 +59,46 @@ export function App() {
 
   const navigateTo = useCallback(
     (path: string) => {
+      if (path === currentPath) return;
       setCurrentPath(path);
+      // Push onto history, truncating any forward entries first.
+      setHistory((h) => [...h.slice(0, histIndex + 1), path]);
+      setHistIndex((i) => i + 1);
       selection.focusFirst();
     },
-    [selection],
+    [selection, currentPath, histIndex],
   );
+
+  const goBack = useCallback(() => {
+    setHistIndex((i) => {
+      if (i > 0) {
+        const next = i - 1;
+        setCurrentPath(history[next]);
+        return next;
+      }
+      return i;
+    });
+  }, [history]);
+
+  const goForward = useCallback(() => {
+    setHistIndex((i) => {
+      if (i < history.length - 1) {
+        const next = i + 1;
+        setCurrentPath(history[next]);
+        return next;
+      }
+      return i;
+    });
+  }, [history]);
+
+  const goUp = useCallback(() => {
+    if (!scan.result) return;
+    const rootPath = scan.result.root.path;
+    if (!currentPath || currentPath === rootPath) return;
+    const sep = currentPath.includes('\\') ? '\\' : '/';
+    const parent = currentPath.slice(0, currentPath.lastIndexOf(sep));
+    navigateTo(parent.length > 0 ? parent : rootPath);
+  }, [currentPath, scan.result, navigateTo]);
 
   const handleActivate = useCallback(
     (entry: { node: { fileType: string; path: string } }) => {
@@ -119,6 +170,7 @@ export function App() {
         <Sidebar
           onScan={(p) => void scan.start(p, filter)}
           scanning={scan.progress !== null}
+          quickPaths={quickPaths}
         />
       </div>
       <div className="app-main">
@@ -127,6 +179,17 @@ export function App() {
           progress={scan.progress}
           onCancel={() => void scan.cancel()}
           onRescan={() => void scan.start(currentPath ?? scan.result?.root.path ?? '/', filter)}
+          canGoUp={!!currentPath && !!scan.result && currentPath !== scan.result.root.path}
+          onGoUp={goUp}
+          canGoBack={histIndex > 0}
+          onGoBack={goBack}
+          canGoForward={histIndex < history.length - 1}
+          onGoForward={goForward}
+        />
+        <Breadcrumb
+          path={currentPath}
+          rootPath={scan.result?.root.path ?? '/'}
+          onNavigate={navigateTo}
         />
         <FilterPanel value={filter} onChange={setFilter} />
         <div className="app-content">
