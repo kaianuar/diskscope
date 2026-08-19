@@ -40,7 +40,7 @@
 # =============================================================================
 set -uo pipefail
 
-BUILDER_MODEL="${BUILDER_MODEL:-commandcode/MiniMaxAI/MiniMax-M3}"
+BUILDER_MODEL="${BUILDER_MODEL:-commandcode/meta/muse-spark-1.2-contributor}"
 MAX_PLAN_ROUNDS="${MAX_PLAN_ROUNDS:-5}"
 MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-8}"
 FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"
