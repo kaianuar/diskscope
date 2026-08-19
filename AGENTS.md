@@ -50,6 +50,23 @@ Rust workspace (Cargo.toml at root) with four crates — hexagonal layout, domai
 - No `any`; type IPC boundaries via `ipc.ts`
 - Buttons/inputs styled with `--ds-*` tokens, not hardcoded colors
 
+## Code Style (Karpathy / Ponytail principles)
+
+The repo follows Andrej Karpathy's coding principles + Ponytail style (originally enforced by the pipeline critic; now expected of any agent writing code here):
+
+1. **Explicit > implicit** — no magic, no hidden state, no implicit side effects. Dependencies explicit, no global mutations.
+2. **Types everywhere** — TypeScript `strict` (on), no `any` without an explicit `// @ts-expect-error` + comment. Rust: explicit types on public functions.
+3. **Small functions** — one thing per function, <50 lines ideal. Split anything doing two things.
+4. **No cleverness** — boring readable code beats clever one-liners. Readability > brevity.
+5. **Explicit error handling** — no bare `catch`/`except`. Handle errors with context. Rust: return `Result`, never swallow errors.
+6. **Tests as documentation** — test names describe behavior: `should_<do>_when_<condition>` (Rust) / `should <do> when <condition>` (TS).
+7. **No magic numbers** — named constants for literals in non-test code.
+8. **Fail fast** — validate inputs at boundaries with descriptive messages.
+9. **Explicit returns** — return types explicit (TS `noImplicitReturns`).
+10. **Hexagonal architecture** — domain at center with ZERO external deps; adapters implement domain ports. Domain depends on abstractions, never concretions.
+11. **Naming** — files kebab-case, types/interfaces PascalCase (prefer `interface` for objects), functions/vars camelCase, constants UPPER_SNAKE_CASE, boolean predicates `is...`/`has...`/`can...`.
+12. **Single responsibility + composition over inheritance** — one reason to change per module; prefer composition/interfaces over class hierarchies.
+
 ## Testing
 
 - **Rust:** `cargo test` (domain 34, cli 10, scan-engine). Tests use `should_<behavior>_when_<condition>` naming.
