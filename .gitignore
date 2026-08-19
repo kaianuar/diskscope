@@ -14,6 +14,9 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+# redb cache files (scan-engine writes *.redb to temp/state dirs)
+*.redb
+# SQLite / redb transaction journals
 *-shm
 *-wal
 *-journal

@@ -313,6 +313,66 @@ cd "$DIR"
 # =============================================================================
 # summary
 # =============================================================================
+# 10. set -e + missing FINDINGS_FILE must not kill the pipeline
+# =============================================================================
+note ""
+note "## 10. missing FINDINGS_FILE under set -e does not exit pipeline"
+WORK=$(mktemp -d)
+
+# Simulate: Gate 1 fails, FINDINGS_FILE doesn't exist, pipeline must continue
+cat > "$WORK/test_set_e.sh" << 'ENDTEST'
+#!/usr/bin/env bash
+set -euo pipefail
+
+FINDINGS_FILE="/tmp/nonexistent_findings_$$.txt"
+RUNLOG="/tmp/nonexistent_runlog_$$.txt"
+
+phase_round=0
+MAX_PHASE_ROUNDS=3
+phase_done=0
+
+while [ "$phase_round" -lt "$MAX_PHASE_ROUNDS" ] && [ "$phase_done" -eq 0 ]; do
+  phase_round=$((phase_round+1))
+  echo "round $phase_round"
+
+  if [ "$phase_round" -eq 1 ]; then
+    echo "  Gate 1: FAIL"
+    continue
+  else
+    set +e
+    FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"
+    [ -z "$FIX_SRC" ] && FIX_SRC="$(cat "${RUNLOG:-}" 2>/dev/null)"
+    set -e
+    echo "  fix round (FIX_SRC empty: $([ -z "$FIX_SRC" ] && echo yes || echo no))"
+  fi
+
+  if [ "$phase_round" -ge 2 ]; then
+    echo "  Gate 1: PASS"
+    phase_done=1
+  fi
+done
+
+echo "completed at round $phase_round"
+ENDTEST
+chmod +x "$WORK/test_set_e.sh"
+OUT=$(bash "$WORK/test_set_e.sh" 2>&1)
+
+echo "$OUT" | grep -q "round 2" && \
+  ok "set-e: pipeline reaches round 2 despite missing FINDINGS_FILE" || \
+  no "set-e: pipeline died before round 2: [$OUT]"
+
+echo "$OUT" | grep -q "completed at round 2" && \
+  ok "set-e: pipeline completes successfully" || \
+  no "set-e: pipeline did not complete: [$OUT]"
+
+rm -rf "$WORK"
+
+# =============================================================================
+note ""
+
+# =============================================================================
+# summary
+# =============================================================================
 note ""
 note "======================================================"
 note " RESULT: $PASS passed, $FAIL failed"
