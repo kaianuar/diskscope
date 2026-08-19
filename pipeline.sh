@@ -40,7 +40,7 @@
 # =============================================================================
 set -uo pipefail
 
-BUILDER_MODEL="${BUILDER_MODEL:-commandcode/meta/muse-spark-1.2-contributor}"
+BUILDER_MODEL="${BUILDER_MODEL:-commandcode/deepseek-v4-flash}"
 MAX_PLAN_ROUNDS="${MAX_PLAN_ROUNDS:-5}"
 MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-8}"
 FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"
