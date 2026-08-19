@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "diskscope-cli"
-version = "0.2.0-alpha.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "diskscope-gui"
-version = "0.2.0-alpha.1"
+version = "0.2.0"
 dependencies = [
  "domain",
  "opener",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.2.0-alpha.1"
+version = "0.2.0"
 
 [[package]]
 name = "dpi"
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "scan-engine"
-version = "0.2.0-alpha.1"
+version = "0.2.0"
 dependencies = [
  "ably",
  "domain",
