@@ -473,8 +473,10 @@ for PHASE in "${PHASES[@]}"; do
         echo "  [$(date +%H:%M:%S)] done batched ($?)"
       fi
     else
+      set +e
       FIX_SRC="$(cat "${FINDINGS_FILE:-}" 2>/dev/null)"
       [ -z "$FIX_SRC" ] && FIX_SRC="$(cat "${RUNLOG:-}" 2>/dev/null)"
+      set -e
       echo "==> [phase] revising code for reviewer/test findings..."
       set +e
       run_omp "Your code for phase '${PHASE}' was reviewed and needs fixing. CRITICAL: follow the -> FIX: instructions EXACTLY as written. Do NOT patch around the issue — implement the architectural change the FIX requests. Do NOT invent your own approach if the FIX specifies one. Fix ONLY the failing code/tests for THIS phase; do not touch later phases or edit plan.md. Findings:\n${FIX_SRC}"
