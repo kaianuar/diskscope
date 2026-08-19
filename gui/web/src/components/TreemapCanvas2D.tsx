@@ -1,5 +1,13 @@
 // Canvas2D treemap renderer — the shipped Phase 4 route (see
 // `gui/web/src/lib/treemapLayout.ts` for the go/no-go rationale).
+//
+// Interaction contract:
+// - Single-click on a directory block → `onActivate` (navigate into it).
+// - Double-click on a leaf block → `onOpen` (open the file with the OS
+//   default app). A double-click on a directory also resolves to
+//   `onActivate` (navigate).
+// - `actionableIndex` (when set) marks the block under the pointer as
+//   actionable so callers can show affordance (cursor / hint).
 
 import { useEffect, useRef } from 'react';
 import type { FileNode } from '../ipc';
@@ -9,12 +17,46 @@ export interface TreemapCanvas2DProps {
   root: FileNode;
   /** Index of the hovered entry, or null. */
   hoveredIndex: number | null;
+  /** Index of the actionable entry under the pointer, or null. */
+  actionableIndex: number | null;
   onHover: (index: number | null) => void;
+  /** Single-click on a directory (navigate). */
   onActivate: (entry: LayoutEntry) => void;
+  /** Double-click on a leaf (open with the OS default app). */
+  onOpen: (entry: LayoutEntry) => void;
 }
 
-export function TreemapCanvas2D({ root, hoveredIndex, onHover, onActivate }: TreemapCanvas2DProps) {
+// Browser delay between the two clicks of a double-click (used to avoid
+// firing a single-click navigation on the first click of a double-click).
+const DOUBLE_CLICK_MS = 300;
+
+/** Hit-test a mouse event against the laid-out entries. */
+function hitTest(
+  e: MouseEvent,
+  entries: LayoutEntry[],
+  canvas: HTMLCanvasElement,
+): LayoutEntry | null {
+  const bounds = canvas.getBoundingClientRect();
+  const x = e.clientX - bounds.left;
+  const y = e.clientY - bounds.top;
+  return (
+    entries.find(
+      (en) =>
+        x >= en.rect.x && x < en.rect.x + en.rect.width && y >= en.rect.y && y < en.rect.y + en.rect.height,
+    ) ?? null
+  );
+}
+
+export function TreemapCanvas2D({
+  root,
+  hoveredIndex,
+  actionableIndex,
+  onHover,
+  onActivate,
+  onOpen,
+}: TreemapCanvas2DProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastClick = useRef<{ time: number; index: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -38,24 +80,30 @@ export function TreemapCanvas2D({ root, hoveredIndex, onHover, onActivate }: Tre
     }
 
     const handleMove = (e: MouseEvent): void => {
-      const bounds = canvas.getBoundingClientRect();
-      const x = e.clientX - bounds.left;
-      const y = e.clientY - bounds.top;
-      const found = entries.find(
-        (en) =>
-          x >= en.rect.x && x < en.rect.x + en.rect.width && y >= en.rect.y && y < en.rect.y + en.rect.height,
-      );
+      const found = hitTest(e, entries, canvas);
       onHover(found ? found.index : null);
     };
     const handleClick = (e: MouseEvent): void => {
-      const bounds = canvas.getBoundingClientRect();
-      const x = e.clientX - bounds.left;
-      const y = e.clientY - bounds.top;
-      const found = entries.find(
-        (en) =>
-          x >= en.rect.x && x < en.rect.x + en.rect.width && y >= en.rect.y && y < en.rect.y + en.rect.height,
-      );
-      if (found && found.node.fileType === 'directory') onActivate(found);
+      const found = hitTest(e, entries, canvas);
+      if (!found) return;
+      const now = Date.now();
+      const prev = lastClick.current;
+      lastClick.current = { time: now, index: found.index };
+      // Second click of a double-click: open leaves, navigate directories.
+      if (prev && prev.index === found.index && now - prev.time <= DOUBLE_CLICK_MS) {
+        if (found.node.fileType === 'directory') {
+          onActivate(found);
+        } else {
+          onOpen(found);
+        }
+        lastClick.current = null; // swallow the pending single-click action
+        return;
+      }
+      // First click of a (possible) double-click: navigate directories
+      // immediately; leaves wait to see if a second click follows.
+      if (found.node.fileType === 'directory') {
+        onActivate(found);
+      }
     };
     canvas.addEventListener('mousemove', handleMove);
     canvas.addEventListener('click', handleClick);
@@ -63,8 +111,9 @@ export function TreemapCanvas2D({ root, hoveredIndex, onHover, onActivate }: Tre
       canvas.removeEventListener('mousemove', handleMove);
       canvas.removeEventListener('click', handleClick);
     };
-  }, [root, hoveredIndex, onHover, onActivate]);
+  }, [root, hoveredIndex, onHover, onActivate, onOpen]);
 
+  const actionable = actionableIndex !== null;
   return (
     <canvas
       ref={canvasRef}
@@ -72,6 +121,7 @@ export function TreemapCanvas2D({ root, hoveredIndex, onHover, onActivate }: Tre
       className="treemap-canvas"
       width={800}
       height={600}
+      style={{ cursor: actionable ? 'pointer' : 'default' }}
     />
   );
 }

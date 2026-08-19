@@ -6,7 +6,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useScan } from './hooks/useScan';
 import { useSelection } from './hooks/useSelection';
 import { useShortcuts } from './hooks/useShortcuts';
-import { deletePaths, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
+import { deletePaths, openFile, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
 import { TreemapCanvas2D } from './components/TreemapCanvas2D';
 import { TableView } from './components/TableView';
 import { Toolbar } from './components/Toolbar';
@@ -34,6 +34,7 @@ export function App() {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>('size');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [actionableIndex, setActionableIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter | undefined>(undefined);
   const [ctxMenu, setCtxMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [history, setHistory] = useState<string[]>([]);
@@ -100,12 +101,36 @@ export function App() {
     navigateTo(parent.length > 0 ? parent : rootPath);
   }, [currentPath, scan.result, navigateTo]);
 
+  const handleTreemapHover = useCallback(
+    (index: number | null) => {
+      setHoveredIndex(index);
+      setActionableIndex(index);
+    },
+    [],
+  );
+
   const handleActivate = useCallback(
     (entry: { node: { fileType: string; path: string } }) => {
       if (entry.node.fileType === 'directory') navigateTo(entry.node.path);
     },
     [navigateTo],
   );
+
+  const handleOpen = useCallback(
+    (entry: { node: { path: string } }) => {
+      openFile(entry.node.path).catch((err) => scan.setError(String(err)));
+    },
+    [scan],
+  );
+
+  // The treemap always lays out the ROOT's children, so actionableIndex is
+  // an index into `root.children` regardless of the current directory.
+  const actionableHint = useMemo(() => {
+    if (actionableIndex === null) return null;
+    const entry = scan.result?.root.children?.[actionableIndex];
+    if (!entry) return null;
+    return entry.fileType === 'directory' ? 'Click to enter' : 'Click to open file';
+  }, [actionableIndex, scan.result]);
 
   const handleDelete = useCallback(async () => {
     if (selection.selected.length === 0) return;
@@ -196,8 +221,10 @@ export function App() {
           <TreemapCanvas2D
             root={scan.result?.root ?? { path: '', size: 0, modified: 0, fileType: 'directory', children: [] }}
             hoveredIndex={hoveredIndex}
-            onHover={setHoveredIndex}
+            actionableIndex={actionableIndex}
+            onHover={handleTreemapHover}
             onActivate={handleActivate}
+            onOpen={handleOpen}
           />
           <TableView
             entries={currentEntries}
@@ -212,6 +239,7 @@ export function App() {
           result={scan.result}
           error={scan.error}
           path={currentPath ?? scan.result?.root.path ?? null}
+          actionableHint={actionableHint}
         />
       </div>
       {ctxMenu && scan.result && (

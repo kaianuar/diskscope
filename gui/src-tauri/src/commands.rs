@@ -79,6 +79,17 @@ pub fn reveal_in_explorer(path: String) -> Result<(), CommandErrorDto> {
     opener::reveal(&path).map_err(|e| CommandErrorDto::Io(e.to_string()))
 }
 
+/// Open `path` with the OS default application. Uses the `opener` crate.
+#[tauri::command]
+pub fn open_file(path: String) -> Result<(), CommandErrorDto> {
+    if path.trim().is_empty() {
+        return Err(CommandErrorDto::InvalidPath(
+            "path must not be empty".into(),
+        ));
+    }
+    opener::open(&path).map_err(|e| CommandErrorDto::Io(e.to_string()))
+}
+
 /// Return the finished scan result (if any) as a DTO, so the frontend
 /// can refresh after reconnection or on demand.
 #[tauri::command]

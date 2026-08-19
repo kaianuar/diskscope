@@ -49,6 +49,7 @@ pub fn run() {
             commands::delete_paths,
             commands::undo_last_delete,
             commands::reveal_in_explorer,
+            commands::open_file,
             commands::get_scan_result,
         ])
         .setup(|app| {

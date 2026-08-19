@@ -75,6 +75,11 @@ export function revealInExplorer(path: string): Promise<void> {
   return invoke<void>('reveal_in_explorer', { path });
 }
 
+/** Open `path` with the OS default application. */
+export function openFile(path: string): Promise<void> {
+  return invoke<void>('open_file', { path });
+}
+
 /** Fetch the finished scan result, if any. */
 export function getScanResult(): Promise<ScanResult | null> {
   return invoke<ScanResult | null>('get_scan_result');

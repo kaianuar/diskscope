@@ -195,6 +195,10 @@ body {
   background: var(--ds-surface);
 }
 
+.treemap-canvas.treemap-actionable {
+  cursor: pointer;
+}
+
 .app-content table {
   flex: 1;
   min-width: 0;
@@ -228,6 +232,12 @@ body {
 
 .status-error {
   color: var(--ds-danger);
+}
+
+.status-hint {
+  color: var(--ds-accent);
+  margin-left: auto;
+  font-style: italic;
 }
 
 input,
