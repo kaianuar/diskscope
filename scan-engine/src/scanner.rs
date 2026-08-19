@@ -197,6 +197,18 @@ fn mtime_to_secs(time: std::io::Result<SystemTime>) -> u64 {
         .unwrap_or(0)
 }
 
+/// Recursively replace each directory's `size` with the sum of its
+/// children's sizes. Leaves (files) keep their real size.
+fn normalize_sizes(node: &mut FileNode) -> u64 {
+    if node.children.is_empty() {
+        node.size
+    } else {
+        let sum: u64 = node.children.iter_mut().map(normalize_sizes).sum();
+        node.size = sum;
+        sum
+    }
+}
+
 /// Fold a flat list of entries into a `FileNode` tree.
 fn build_tree(root: &Path, entries: &[WalkEntry]) -> FileNode {
     if entries.is_empty() {
@@ -225,13 +237,15 @@ fn build_tree(root: &Path, entries: &[WalkEntry]) -> FileNode {
         .map(|e| (e.size, e.modified))
         .unwrap_or((0, 0));
 
-    FileNode {
+    let mut node = FileNode {
         path: root.to_string_lossy().into_owned(),
         size: root_size,
         modified: root_modified,
         file_type: FileType::Directory,
         children: build_children(&mut by_parent, PathBuf::new()),
-    }
+    };
+    normalize_sizes(&mut node);
+    node
 }
 
 /// Recursively build children for entries whose `rel` parent matches
@@ -244,6 +258,9 @@ fn build_children(
     if let Some(mut entries) = by_parent.remove(&parent_rel) {
         entries.sort_by(|a, b| a.rel.cmp(&b.rel));
         for e in entries {
+            if e.rel.as_os_str().is_empty() {
+                continue; // root is not its own child
+            }
             let child_rel = e.rel.clone();
             let children_out = if e.is_dir {
                 build_children(by_parent, child_rel)
