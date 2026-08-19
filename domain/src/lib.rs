@@ -187,9 +187,8 @@ pub struct FileNode {
     /// Absolute or scan-root-relative path string. Never empty for nodes
     /// created via [`FileNode::new`].
     pub path: String,
-    /// Size of the entry in bytes. For directories, this is the size of
-    /// the directory entry itself (typically 0); recursive totals are
-    /// computed via [`FileNode::total_size`].
+    /// Size of the entry in bytes. For directories, `normalize_sizes` in
+    /// the scanner sets this to the recursive sum of all descendants.
     pub size: u64,
     /// Last-modified time as a Unix timestamp in seconds.
     pub modified: u64,
@@ -242,12 +241,11 @@ impl FileNode {
         self.file_type == FileType::Directory
     }
 
-    /// Recursive total size in bytes: own size plus all descendants.
+    /// Recursive total size in bytes: the node's own size, which for
+    /// directories is already the sum of all descendants (`normalize_sizes`
+    /// in the scanner guarantees this).
     pub fn total_size(&self) -> u64 {
-        if self.children.is_empty() {
-            return self.size;
-        }
-        self.size + self.children.iter().map(Self::total_size).sum::<u64>()
+        self.size
     }
 
     /// Recursive count of file-system entries, including this node.
@@ -270,8 +268,9 @@ impl FileNode {
 pub struct ScanResult {
     /// Root of the scanned tree.
     pub root: FileNode,
-    /// Sum of `total_size()` over `root`. Recomputed when built via
-    /// [`ScanResult::from_tree`] or [`ScanResult::with_children`].
+    /// Total scan size in bytes: equals `root.size`, which for a
+    /// directory root is the recursive sum of all descendants
+    /// (guaranteed by `normalize_sizes` in the scanner).
     pub total_size: u64,
     /// Number of entries (files + directories) under `root`, including the
     /// root itself. Recomputed when built via the constructors above.
@@ -304,9 +303,10 @@ impl ScanResult {
     /// path; the aggregated `total_size` and `file_count` are computed
     /// from the children.
     pub fn with_children(children: Vec<FileNode>, scan_duration_ms: u64) -> Self {
+        let children_size = children.iter().map(|c| c.total_size()).sum::<u64>();
         let root = FileNode {
             path: String::new(),
-            size: 0,
+            size: children_size,
             modified: 0,
             file_type: FileType::Directory,
             children,
@@ -594,15 +594,17 @@ mod tests {
     // ── ScanResult aggregation ─────────────────────────────────────────
 
     fn sample_tree() -> FileNode {
+        // Sizes reflect `normalize_sizes`: directories store the recursive
+        // sum of their descendants.
         FileNode {
             path: "/project".into(),
-            size: 0,
+            size: 1500,
             modified: 0,
             file_type: FileType::Directory,
             children: vec![
                 FileNode {
                     path: "/project/src".into(),
-                    size: 0,
+                    size: 1000,
                     modified: 0,
                     file_type: FileType::Directory,
                     children: vec![FileNode {
