@@ -9,7 +9,7 @@ description = "DiskScope GUI (Tauri v2 + React + Canvas2D treemap)."
 
 [[bin]]
 name = "diskscope-gui"
-path = "src/main.rs"
+path = "src-tauri/src/main.rs"
 
 [lib]
 name = "gui"
