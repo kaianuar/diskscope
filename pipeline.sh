@@ -440,8 +440,10 @@ for PHASE in "${PHASES[@]}"; do
     if [ "$phase_round" -eq 1 ]; then
       # Sub-chunk: extract deliverables from the plan and build one at a time.
       # Each focused omp call stays within OMP_TIMEOUT.
-      # Cap at MAX_SUBCHUNKS (5) per phase — if more, send as one focused call.
-      MAX_SUBCHUNKS="${MAX_SUBCHUNKS:-5}"
+      # Cap at MAX_SUBCHUNKS per phase — if more, send as one focused call.
+      # Higher cap = more, smaller calls (each within OMP_TIMEOUT). 37 deliverables
+      # at 8/call = 5 calls, vs 1 giant 20-min call that times out.
+      MAX_SUBCHUNKS="${MAX_SUBCHUNKS:-8}"
       IFS=$'\n' read -r -d '' -a deliverables < <(extract_deliverables "$PHASE" && printf '\0')
       if [ "${#deliverables[@]}" -eq 0 ]; then
         # Fallback: no deliverables found, use monolithic call
@@ -508,6 +510,11 @@ for PHASE in "${PHASES[@]}"; do
     git add -A 2>/dev/null || true
     git diff --cached HEAD -- . ':!**/package-lock.json' ':!**/pnpm-lock.yaml' ':!**/yarn.lock' ':!**/Cargo.lock' ':!**/target/**' ':!**/node_modules/**' ':!**/tests/e2e/**' > /tmp/phase.diff
     if [ ! -s /tmp/phase.diff ]; then
+      if [ "$phase_round" -eq 1 ]; then
+        echo "  xx no diff for phase ${PHASE} (builder timed out / wrote nothing). Retrying round 2 (fix path)." >&2
+        echo "  xx If this repeats, the phase is too big — raise MAX_SUBCHUNKS or split the phase in plan.md." >&2
+        continue
+      fi
       echo "  xx no diff for phase ${PHASE} (nothing staged since last commit). Halting." >&2
       all_green=0
       break
