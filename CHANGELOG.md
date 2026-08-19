@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.0-alpha.1 — 2026-08-20
+
+Pre-release (alpha). First feature release after v0.1.0: treemap interaction and GUI navigation, plus testing/CI hardening.
+
+### GUI
+
+- **Treemap click-to-navigate** — single-click a directory block to enter it; double-click a file block to open it with the OS default app (new `open_file` Tauri command). Hover shows a pointer cursor and a status-bar hint ("Click to enter" / "Click to open file").
+- **Navigation UX** — breadcrumb bar (clickable path segments), Up/Back/Forward toolbar buttons, quick-scan shortcuts (Home/Root) in the sidebar, file-browser history.
+
+### Cross-platform
+
+- **macOS trash fix** — `trash::os_limited` is cfg-gated out on macOS; `list_trash`/`restore_items` return `DomainError::Unsupported` instead of failing to compile. Added `Unsupported` variant + GUI DTO mapping.
+
+### CI & testing
+
+- **Test workflow on every push** — Rust (`cargo test` + clippy), frontend (`tsc` + vitest + build), and Playwright e2e against the built frontend.
+- Expanded unit/component/e2e coverage for the treemap interactions (double-click window, hover clearing, App-level wiring, real-browser e2e).
+- Build & Release workflow now marks prerelease tags (e.g. `v0.2.0-alpha.1`) as prerelease releases.
+
 ## v0.1.0 — 2026-08-19
 
 Initial release. Core scan engine, CLI, and Tauri GUI are functional. Built autonomously by the omp-agent pipeline (5 phases, all gates passing).
