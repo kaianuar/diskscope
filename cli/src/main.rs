@@ -79,19 +79,19 @@ fn run_scan(cmd: cli::ScanArgs) -> anyhow::Result<()> {
         result = scan_engine::filter::apply_filter(&result, &filter);
     }
 
-    if !cmd.quiet {
-        let out = io::stdout();
-        let mut lock = out.lock();
-        scan_engine::format::render(&result, fmt, &mut lock)?;
-    }
+    let out = io::stdout();
+    let mut lock = out.lock();
+    scan_engine::format::render(&result, fmt, &mut lock)?;
 
-    eprintln!(
-        "scanned {} entries ({}), {} skipped, {} ms",
-        result.file_count,
-        domain::format_size(result.total_size),
-        result.skipped_count(),
-        result.scan_duration_ms
-    );
+    if !cmd.quiet {
+        eprintln!(
+            "scanned {} entries ({}), {} skipped, {} ms",
+            result.file_count,
+            domain::format_size(result.total_size),
+            result.skipped_count(),
+            result.scan_duration_ms
+        );
+    }
     Ok(())
 }
 

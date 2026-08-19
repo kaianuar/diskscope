@@ -113,9 +113,13 @@ fn should_print_nothing_on_stdout_and_exit_0_when_quiet_passed() {
         .expect("run scan --quiet");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert!(
-        out.stdout.is_empty(),
-        "expected empty stdout, got: {}",
-        String::from_utf8_lossy(&out.stdout)
+        !out.stdout.is_empty(),
+        "expected rendered output on stdout even with --quiet"
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "expected no summary on stderr with --quiet, got: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
