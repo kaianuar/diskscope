@@ -33,6 +33,10 @@ pub mod scanner;
 pub mod sort;
 pub mod trash;
 
+// Real-time sync (Phase 5). Only compiled when the `sync` feature is on.
+#[cfg(feature = "sync")]
+pub mod sync;
+
 use std::path::Path;
 use std::time::Instant;
 
