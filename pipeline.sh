@@ -466,13 +466,21 @@ for PHASE in "${PHASES[@]}"; do
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
       else
-        # Too many deliverables — send as one focused multi-file call
-        dl_list=$(printf '  - %s\n' "${deliverables[@]}")
-        echo "==> [phase] implementing ${#deliverables[@]} deliverables (batched) for ${PHASE}"
-        log_int "PHASE" "BUILDER" "${PHASE}" "batched: ${#deliverables[@]} deliverables"
-        echo "  [$(date +%H:%M:%S)] building ${#deliverables[@]} deliverables..."
-        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} PRESERVE all existing code: never delete or rewrite files/modules that already exist and work — add, extend, or fix them instead. Only create NEW files the plan lists. Do NOT edit plan.md. Do not implement future phases."; set -e
-        echo "  [$(date +%H:%M:%S)] done batched ($?)"
+        # Too many deliverables — send as multiple focused calls, MAX_SUBCHUNKS per
+        # call. One giant call exceeds OMP_TIMEOUT (24 deliverables ~= 20+ min).
+        echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE} in chunks of ${MAX_SUBCHUNKS}:"
+        log_int "PHASE" "BUILDER" "${PHASE}" "chunked: ${#deliverables[@]} deliverables, ${MAX_SUBCHUNKS}/call"
+        chunk_total=$(( (${#deliverables[@]} + MAX_SUBCHUNKS - 1) / MAX_SUBCHUNKS ))
+        chunk_i=0
+        for ((start=0; start<${#deliverables[@]}; start+=MAX_SUBCHUNKS)); do
+          chunk_i=$((chunk_i+1))
+          chunk=("${deliverables[@]:start:MAX_SUBCHUNKS}")
+          dl_list=$(printf '  - %s\n' "${chunk[@]}")
+          echo "  [$(date +%H:%M:%S)] building chunk ${chunk_i}/${chunk_total} (${#chunk[@]} deliverables)..."
+          set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build THESE SPECIFIC deliverables (chunk ${chunk_i}/${chunk_total}):${dl_list} PRESERVE all existing code: never delete or rewrite files/modules that already exist and work — add, extend, or fix them instead. Only create NEW files the plan lists. Do NOT edit plan.md. Do not implement future phases."; set -e
+          echo "  [$(date +%H:%M:%S)] done chunk ${chunk_i}/${chunk_total} ($?)"
+        done
+        echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
       fi
     else
       set +e
