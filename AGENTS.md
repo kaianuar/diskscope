@@ -15,7 +15,7 @@ Rust workspace (Cargo.toml at root) with four crates — hexagonal layout, domai
 | Crate | Path | Responsibility |
 |---|---|---|
 | `domain` | `domain/` | Pure domain: `FileNode`, `FileTree`, `Filter`, `FileType`, `SortKey`, `OutputFormat`, `ScanOpts`, `DomainError`, port traits (`Scanner`, `Cache`, `Trash`). **Zero dependencies on other crates.** No I/O. |
-| `scan-engine` | `scan-engine/` | Adapters: parallel walker (`ignore` + `rayon`), `redb` cache, incremental scanner, size normalization, trash integration, sync (Ably, unused by GUI yet). Depends on `domain`. |
+| `scan-engine` | `scan-engine/` | Adapters: `JwalkScanner` (parallel walk via `jwalk`, `.gitignore` support), `RedbCache` (mtime+size incremental invalidation), `TrashBin` (undo stack; `trash::os_limited` cfg-gated out on macOS), filter/sort/format renderers, `ScanService` facade. Depends on `domain`. |
 | `cli` | `cli/` | `diskscope` binary (clap). Thin controller over scan-engine. |
 | `gui` | `gui/` | Tauri v2 app. `gui/src-tauri/` = Rust backend (commands, DTOs, scan runner). `gui/web/` = React 18 + TypeScript frontend (Vite). |
 
@@ -33,11 +33,12 @@ Rust workspace (Cargo.toml at root) with four crates — hexagonal layout, domai
 
 **Rust:**
 - Edition 2021, MSRV 1.75
-- `#![forbid(unsafe_code)]` in gui lib; `unsafe` is forbidden unless truly required — prefer safe refactors
+- Workspace lints: `unsafe_code = forbid` + `clippy::all = deny` (workspace-wide); `domain` additionally `#![deny(missing_docs)]`
 - Errors: `DomainError` enum with typed variants; return `Result`, never `.expect()`/`.unwrap()` in non-test code
 - No panics on user input; invalid paths → `DomainError::InvalidPath` or `PermissionDenied`
 - Directory `size` fields are **recursive sums of children** (normalize_sizes post-pass in scanner). Never set a dir's size from `metadata.len()` — that's the raw inode size and double-counts.
 - `total_size()` returns `self.size` (already the sum for dirs post-normalize); do NOT add children again
+- **Serde mirror pattern:** `domain` types NEVER derive `Serialize`/`Deserialize` (keeps domain zero-dep). Adapters mirror domain types with serde (`CachedNode` in scan-engine/cache.rs, DTOs in gui/src-tauri/dto.rs). Replicate this — don't bypass it by adding serde to domain.
 - Cross-platform: `trash::os_limited` is **cfg-gated OUT on macOS** — any new use must go through the cfg-gated helpers in `scan-engine/src/trash.rs` (`list_trash`/`restore_items`) which return `DomainError::Unsupported` on macOS
 - Path separators: handle both `/` and `\` (Windows)
 
@@ -86,7 +87,7 @@ The repo follows Andrej Karpathy's coding principles + Ponytail style (originall
 - Unit tests fast + isolated (no I/O); integration tests real (DB/API), clearly separated.
 - Coverage: >80% on domain logic, 100% on critical paths.
 
-**Rust:** `cargo test` (domain 34, cli 10, scan-engine). Tests use `should_<behavior>_when_<condition>` naming.
+**Rust:** `cargo test` — 34 domain + 14 cli (4 unit + 10 integration) + 5 gui. Tests use `should_<behavior>_when_<condition>` naming.
 **Frontend:** `npx vitest run` (14 tests, components + hooks). Tests in `src/**/__tests__/`.
 **E2E:** Playwright specs in `tests/e2e/` (self-contained, run against `localhost:5173` dev server; `BASE_URL` env to override).
 **CLI behavior:** verify manually against real dirs — sizes must match `du -sb`, no duplicate root rows, `--quiet` must keep output (these were the historical bug classes).
@@ -151,6 +152,6 @@ Format: `type(scope): imperative description` — e.g. `feat(gui): add breadcrum
 - **`main` is the stable trunk.** Never commit directly to it. Always work on a feature branch: `feat/<description>` (new features), `fix/<description>` (bug fixes), `refactor/<description>`, `docs/<description>`, `chore/<description>` — branched off `main`.
 - Keep branches short-lived; merge back to `main` when the work is complete and verified (tests pass).
 - The repo uses `--no-verify` on commits by convention (pre-commit hooks are unreliable here)
-- Verify with `tsc --noEmit` + `npm run build` + `npx vitest run` for frontend, `cargo test` for Rust, before finishing
+- Verify with `cargo test` + `cargo clippy -- -D warnings` for Rust, `tsc --noEmit` + `npm run build` + `npx vitest run` for frontend, before finishing
 - Do NOT add omp-agent pipeline files (gate scripts, plan.md, requirements.md, ponytail.yaml) — they were intentionally removed
 - Do NOT commit `.env` files (gitignored; API keys live outside the repo)
