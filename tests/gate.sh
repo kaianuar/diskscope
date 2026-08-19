@@ -52,10 +52,11 @@ run_cmd() {
     # The test command is passed via env var CMD to avoid `--`/`$*` parsing quirks.
     out="$(docker run --rm \
             -v "$(pwd)":/app -w /app \
+            --user "$(id -u):$(id -g)" \
             -e INSTALL="$inst" \
             -e CMD="$*" \
             "${OMP_DOCKER_IMAGE}" bash -lc \
-            'export PATH="${CARGO_HOME:-/root/.cargo}/bin:/usr/local/bin:$PATH"; export HOME=/root; \
+            'export PATH="/usr/local/cargo/bin:/usr/local/bin:$PATH"; export HOME=/tmp; \
              [ -z "$INSTALL" ] || { echo "--[gate] install: $INSTALL"; eval "$INSTALL" || exit 1; }; \
              { [ -n "$CMD" ] && eval "$CMD" || exit 0; }' 2>&1)"
     rc=$?
