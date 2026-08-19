@@ -117,3 +117,6 @@ jobs:
         with:
           files: artifacts/**
           draft: true
+          # Prerelease tags (e.g. v0.2.0-alpha.1) produce prerelease
+          # releases rather than full releases.
+          prerelease: startsWith(github.ref_name, 'v') && contains(github.ref_name, '-')
