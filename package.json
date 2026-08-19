@@ -1,0 +1,18 @@
+{
+  "name": "diskscope",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DiskScope — fast cross-platform disk space analyzer",
+  "workspaces": [
+    "gui/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w gui/web",
+    "build": "npm run build -w gui/web",
+    "test": "npm run test -w gui/web",
+    "test:e2e": "playwright test tests/e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

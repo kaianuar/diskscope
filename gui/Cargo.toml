@@ -5,14 +5,27 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "DiskScope GUI (Tauri + React + egui). Placeholder for Phase 1; real implementation in Phase 4."
+description = "DiskScope GUI (Tauri v2 + React + Canvas2D treemap)."
 
 [[bin]]
 name = "diskscope-gui"
 path = "src/main.rs"
 
+[lib]
+name = "gui"
+path = "src-tauri/src/lib.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 domain = { path = "../domain" }
+scan-engine = { path = "../scan-engine" }
+opener = { version = "0.8", features = ["reveal"] }
+parking_lot = "0.12"
 
 [lints]
 workspace = true
