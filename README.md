@@ -24,6 +24,8 @@ cargo run -p diskscope-cli -- summary .
 cargo run -p diskscope-cli -- completions bash
 ```
 
+The built binary is named `diskscope` (e.g. `./target/debug/diskscope scan .`).
+
 ### CLI Options
 
 ```
@@ -38,7 +40,7 @@ diskscope scan [OPTIONS] [PATH]
 
 ## How It Works
 
-DiskScope uses `ignore::WalkBuilder` for parallel directory traversal with native `.gitignore` support, `redb` for persistent caching (incremental scans skip unchanged files), and `rayon` for parallelism. The scan engine runs in a background thread; the GUI (coming in Phase 4) stays responsive during scans.
+DiskScope uses `ignore::WalkBuilder` for parallel directory traversal with native `.gitignore` support, `redb` for persistent caching (incremental scans skip unchanged files), and `rayon` for parallelism. The scan engine runs in a background thread; the Tauri GUI stays responsive during scans.
 
 ## Stack
 
@@ -48,21 +50,21 @@ DiskScope uses `ignore::WalkBuilder` for parallel directory traversal with nativ
 | Scanner | `ignore` (parallel walk) + `rayon` |
 | Cache | `redb` (embedded key-value store) |
 | CLI | `clap` |
-| GUI (planned) | Tauri v2 + egui + React 18 |
+| GUI | Tauri v2 + egui + React 18 |
 | Architecture | Hexagonal — domain at center, adapters at edges |
 
 ## Project Structure
 
 ```
 diskscope/
-├── scan-engine/          # Core scanning library
-│   ├── src/domain/       # Pure domain: FileNode, Filter, FileType, ports
-│   ├── src/scanner/      # Adapters: walker, cache, incremental scanner
-│   └── tests/            # Integration + domain unit tests
+├── domain/               # Pure domain crate: FileNode, Filter, ports, error types
+├── scan-engine/          # Scanning library: walker, cache, incremental scanner
+│   └── src/              # cache.rs, filters.rs, scanner.rs, sort.rs, trash.rs
 ├── cli/                  # CLI binary (clap)
-├── gui/                  # GUI binary (Tauri + egui, stub)
+├── gui/                  # GUI binary (Tauri + React + egui treemap)
+├── tests/                # Pipeline gates (gate.sh, review_gate.sh, visual_gate.sh)
 ├── Cargo.toml            # Workspace root
-└── plan.md               # Build plan (8 phases)
+└── plan.md               # Build plan (5 phases)
 ```
 
 ## Development
