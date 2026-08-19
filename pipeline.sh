@@ -68,6 +68,20 @@ hash_of() {  # sha256 prefix of a file (or N/A if missing) - used to spot stale 
 # pipeline with no error message. The trap returns 0 so bash continues.
 trap 'echo "xx [pipeline] ERR at ${BASH_SOURCE[0]}:${LINENO}: exit=$? cmd=${BASH_COMMAND}" >&2; log_int "PIPELINE" "ERR" "$LINENO" "exit=$? cmd=${BASH_COMMAND}"; true' ERR
 
+
+# ERR trap: log unexpected failures, but skip known safe patterns
+# (cat on missing file, grep with no match, etc.)
+_on_err() {
+  local exit_code=$?
+  local cmd="${BASH_COMMAND}"
+  # Skip known noisy patterns that are expected non-zero
+  [[ $cmd == *'cat "'* ]] && return 0
+  [[ $cmd == *'\$?'* ]] && return 0
+  [[ $cmd == *'return "\$rc"'* ]] && return 0
+  echo "xx [pipeline] ERR at ${BASH_SOURCE[0]}:${LINENO}: exit=$exit_code cmd=$cmd" >&2
+  log_int "PIPELINE" "ERR" "${LINENO}" "exit=$exit_code cmd=$cmd"
+  return 0
+}
 PROJ_ROOT="$(pwd)"
 
 # Present any outstanding NON-BLOCKING (P2/P3/P4) review findings collected across
