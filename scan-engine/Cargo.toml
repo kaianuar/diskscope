@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "DiskScope scan engine adapter: parallel filesystem walk, incremental caching, safe delete, filtering, sorting, and output formatting."
+description = "DiskScope scan engine adapter. Placeholder for Phase 1; concrete implementation lands in Phase 2."
 
 [lib]
 name = "scan_engine"
@@ -13,30 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 domain = { path = "../domain" }
-
-# Parallel filesystem walk
-jwalk = "0.9"
-rayon = "1.12"
-walkdir = "2.5"
-
-# .gitignore-aware walking
-ignore = "0.4"
-
-# Embedded cache
-redb = "4.2"
-
-# Cross-platform move-to-trash
-trash = { version = "5.2", default-features = false }
-
-# Serialization for JSON output formats only
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Interior mutability primitives
-parking_lot = "0.12"
-
-[dev-dependencies]
-tempfile = "3.27"
 
 [lints]
 workspace = true

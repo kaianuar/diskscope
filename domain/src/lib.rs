@@ -18,11 +18,53 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
-pub mod ports;
-
 use std::fmt;
 use std::io;
 use std::path::Path;
+
+pub mod ports;
+
+// ── PathError ─────────────────────────────────────────────────────────────
+
+/// A non-fatal filesystem error encountered while scanning.
+///
+/// Scanners must surface permission-denied subtrees, broken symlinks, and
+/// similar I/O failures as [`PathError`] entries inside
+/// [`ScanResult::skipped`] rather than aborting the whole scan. Each entry
+/// carries the path that triggered the error and the underlying
+/// [`std::io::ErrorKind`] so callers can group / report them without
+/// depending on the OS error string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathError {
+    /// Path that triggered the error. May be a relative or absolute path;
+    /// adapters normalize it however they see fit.
+    pub path: String,
+    /// The OS-level error kind, so callers can classify / filter without
+    /// parsing the message.
+    pub kind: io::ErrorKind,
+    /// Free-form message from the underlying I/O failure.
+    pub message: String,
+}
+
+impl PathError {
+    /// Build a `PathError` from an [`io::Error`] and the path that caused it.
+    pub fn from_io(path: impl Into<String>, err: &io::Error) -> Self {
+        Self {
+            path: path.into(),
+            kind: err.kind(),
+            message: err.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for PathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}: {} ({})", self.kind, self.message, self.path)
+    }
+}
+
+impl std::error::Error for PathError {}
+
 
 // ── FileType ──────────────────────────────────────────────────────────────
 
@@ -236,6 +278,10 @@ pub struct ScanResult {
     pub file_count: u64,
     /// Wall-clock scan duration as reported by the caller, in milliseconds.
     pub scan_duration_ms: u64,
+    /// Non-fatal filesystem errors encountered during the walk (permission
+    /// denied subtrees, broken symlinks, etc.). The scan continues past
+    /// these entries; callers can surface them in the UI / CLI.
+    pub skipped: Vec<PathError>,
 }
 
 impl ScanResult {
@@ -249,6 +295,7 @@ impl ScanResult {
             total_size,
             file_count,
             scan_duration_ms,
+            skipped: Vec::new(),
         }
     }
 
@@ -271,7 +318,13 @@ impl ScanResult {
             total_size,
             file_count,
             scan_duration_ms,
+            skipped: Vec::new(),
         }
+    }
+
+    /// Number of skipped paths (`self.skipped.len()`).
+    pub fn skipped_count(&self) -> usize {
+        self.skipped.len()
     }
 }
 

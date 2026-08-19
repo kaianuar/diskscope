@@ -447,7 +447,7 @@ for PHASE in "${PHASES[@]}"; do
         # Fallback: no deliverables found, use monolithic call
         echo "==> [phase] implementing (monolithic): ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "monolithic (no deliverables extracted)"
-        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. Do NOT edit plan.md. Do not implement future phases."; set -e
+        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build only the code and tests this phase requires. PRESERVE all existing code: never delete or rewrite files/modules that already exist and work — add, extend, or fix them instead. Only create NEW files the plan lists. Do NOT edit plan.md. Do not implement future phases."; set -e
       elif [ "${#deliverables[@]}" -le "$MAX_SUBCHUNKS" ]; then
         echo "==> [phase] implementing ${#deliverables[@]} deliverables for ${PHASE}:"
         log_int "PHASE" "BUILDER" "${PHASE}" "sub-chunked: ${#deliverables[@]} deliverables"
@@ -459,7 +459,7 @@ for PHASE in "${PHASES[@]}"; do
           echo "  [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}"
           log_int "PHASE" "BUILDER" "${PHASE}" "deliverable $((i+1)): ${file_hint:-$desc}"
           echo "  [$(date +%H:%M:%S)] building [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc}..."
-          set +e; run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. Do NOT create other files, edit plan.md, or implement other phases."; set -e
+          set +e; run_omp "Implement THIS SPECIFIC deliverable for phase '${PHASE}': ${d}. Only create/modify this file. PRESERVE all other existing files exactly as they are — never delete or rewrite code outside this deliverable. Do NOT create other files, edit plan.md, or implement other phases."; set -e
           echo "  [$(date +%H:%M:%S)] done [$((i+1))/${#deliverables[@]}] ${file_hint:-$desc} ($?)"
         done
         echo "==> [phase] all ${#deliverables[@]} deliverables complete for ${PHASE}"
@@ -469,7 +469,7 @@ for PHASE in "${PHASES[@]}"; do
         echo "==> [phase] implementing ${#deliverables[@]} deliverables (batched) for ${PHASE}"
         log_int "PHASE" "BUILDER" "${PHASE}" "batched: ${#deliverables[@]} deliverables"
         echo "  [$(date +%H:%M:%S)] building ${#deliverables[@]} deliverables..."
-        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} Do NOT edit plan.md. Do not implement future phases."; set -e
+        set +e; run_omp "Implement THIS PHASE ONLY per the approved plan.md: ${PHASE}. Build these specific deliverables:${dl_list} PRESERVE all existing code: never delete or rewrite files/modules that already exist and work — add, extend, or fix them instead. Only create NEW files the plan lists. Do NOT edit plan.md. Do not implement future phases."; set -e
         echo "  [$(date +%H:%M:%S)] done batched ($?)"
       fi
     else
@@ -479,7 +479,7 @@ for PHASE in "${PHASES[@]}"; do
       set -e
       echo "==> [phase] revising code for reviewer/test findings..."
       set +e
-      run_omp "Your code for phase '${PHASE}' was reviewed and needs fixing. CRITICAL: follow the -> FIX: instructions EXACTLY as written. Do NOT patch around the issue — implement the architectural change the FIX requests. Do NOT invent your own approach if the FIX specifies one. Fix ONLY the failing code/tests for THIS phase; do not touch later phases or edit plan.md. Findings:\n${FIX_SRC}"
+      run_omp "Your code for phase '${PHASE}' was reviewed and needs fixing. CRITICAL: follow the -> FIX: instructions EXACTLY as written. Do NOT patch around the issue — implement the architectural change the FIX requests. Do NOT invent your own approach if the FIX specifies one. PRESERVE all existing code that is NOT mentioned in the findings: never delete, gut, or rewrite working modules to 'clean up' — the FIX lines tell you exactly what to change and where. If a FIX says 'restore X', recreate it exactly as specified; do not delete anything else. Fix ONLY the failing code/tests for THIS phase; do not touch later phases or edit plan.md. Findings:\\n${FIX_SRC}"
       set -e
     fi
 
@@ -511,6 +511,15 @@ for PHASE in "${PHASES[@]}"; do
       echo "  xx no diff for phase ${PHASE} (nothing staged since last commit). Halting." >&2
       all_green=0
       break
+    fi
+    # Deletion guard: if this phase deleted a large number of source files that
+    # are not mentioned as replacements, abort before spending critic tokens.
+    DELETED_SRC=$(git diff --cached --diff-filter=D --name-only HEAD -- '*.rs' '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.go' 2>/dev/null | wc -l)
+    if [ "$DELETED_SRC" -gt 0 ]; then
+      echo "  xx [pipeline] DELETION GUARD: ${DELETED_SRC} source file(s) deleted this phase (git diff --diff-filter=D)."
+      echo "  xx If this was intentional (refactor/move), commit them; if not, the builder deleted code it shouldn't."
+      echo "  xx Deleted: $(git diff --cached --diff-filter=D --name-only HEAD -- '*.rs' '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.go' 2>/dev/null | head -5 | tr '\n' ' ')"
+      log_int "PIPELINE" "WARN" "${PHASE}" "DELETION GUARD: ${DELETED_SRC} source files deleted"
     fi
     set +e
     REVIEW_NOTES_FILE="${REVIEW_NOTES_FILE}" REVIEW_LEDGER="${REVIEW_LEDGER:-/tmp/review_ledger.txt}" PIPELINE_CRITIC_MODEL="${CRITIC_MODEL:-meta/muse-spark-1.2-contributor}" bash "$PROJ_ROOT/tests/review_gate.sh" /tmp/phase.diff 2>&1 | tee -a "${RUNLOG}"
