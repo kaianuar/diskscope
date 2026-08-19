@@ -16,7 +16,7 @@ cargo clippy -- -D warnings   # verify lint passes
 
 ## Branching
 
-All work happens on topic branches off the default branch (`feat/phase1-domain-core`):
+All work happens on topic branches off `main`:
 
 - `feat/<description>` — new features
 - `fix/<description>` — bug fixes
