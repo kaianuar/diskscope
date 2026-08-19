@@ -1,7 +1,7 @@
 {
   "name": "diskscope",
   "private": true,
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0",
   "description": "DiskScope \u2014 fast cross-platform disk space analyzer",
   "workspaces": [
     "gui/web"
