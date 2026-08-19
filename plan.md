@@ -69,7 +69,7 @@ flowchart LR
 **Critical paths**
 - Scan: `GUI/CLI → scan_engine::Scanner::scan → jwalk+rayon+ignore → ScanResult`
 - Delete: `GUI/CLI → scan_engine::Trash::move_to_trash → trash crate`
-- Cache: `scan_engine::Cache (redb) keyed by (path, mtime, size)`
+- Cache: `scan_engine::Cache (redb) keyed by canonicalized (path, mtime, size)`
 
 **Constraints (from GUIDELINES + requirements)**
 - Rust 2021, `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()`
@@ -93,7 +93,9 @@ quality. No scanning, no UI, no I/O. Zero external deps. Pure-Rust only.
   shared MSRV = "1.75".
 - `domain/Cargo.toml`: package metadata; `[lib]`; **no** runtime deps.
 - `domain/src/lib.rs`: keep and harden the existing `FileType`, `DomainError`,
-  `FileNode`, `ScanResult`, `Filter`, `SortSpec`, `format_size`.
+  `FileNode`, `ScanResult`, `Filter`, `SortSpec`, `format_size`; add
+  `skipped: Vec<PathError>` to `ScanResult` (walk errors such as
+  permission-denied subtrees; never aborts a scan).
 - `domain/src/ports.rs`: keep and harden `Scanner`, `Trash`, `Cache` traits.
 - `domain/src/lib.rs` `#![deny(missing_docs)]`, `#![deny(clippy::all)]`,
   `#![forbid(unsafe_code)]`.
@@ -169,15 +171,25 @@ directory tree.
     respecting `ignore::gitignore` rules, fills `ScanResult`.
   - Incremental: when `Cache::get(path)` returns a hit AND root mtime/size
     unchanged → reuse; else rescan subtree; persist results.
+  - Cache keys are canonicalized: absolute, trailing separator stripped
+    (dedupe `./`/`..`), so `foo/` ≡ `foo`; case preserved per-platform.
+    Permissions/symlink errors are recorded in `ScanResult::skipped`, never
+    fatal.
 - `scan-engine/src/cache.rs`:
   - `pub struct RedbCache` impl `Cache` using `redb` 2.x embedded DB
     (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`).
   - `invalidate(path)` removes the key (and any child prefixes via range
     delete — exact prefix scan needed for rescan correctness).
+  - **Multi-process safety (CLI + GUI concurrent):** redb allows one writer
+    per DB file, so the cache is opened write-once with exclusive ownership;
+    on `lock_error`, reopen read-only (cache reads still work, writes are
+    skipped for that session) and surface a non-fatal notice. Undo journal
+    (Phase 2) uses the same policy.
 - `scan-engine/src/trash.rs`:
   - `pub struct TrashBin` impl `Trash` backed by `trash` crate; maintains
-    an undo stack of `(original_path, trashed_item_id)` so
-    `undo_last()` restores the last entry.
+    a **persisted undo journal** (same redb file) of
+    `(original_path, trashed_item_id)`, so `undo_last()` survives app
+    restart/crash; journal entry is removed after successful restore.
 - `scan-engine/src/filters.rs`: `pub fn apply_filter(result: &ScanResult,
   filter: &Filter) -> ScanResult`.
 - `scan-engine/src/sort.rs`: `pub fn apply_sort(entries: &mut [FileNode],
@@ -215,9 +227,16 @@ Unit:
 - `should render tree indentation when format is Tree`.
 - `should render aligned columns when format is Table`.
 
-Integration (real tempdir, `tests/` inside `scan-engine`):
-- `should scan 10k files in under 2 s on a tmpfs when Scanner::scan given a
-  synthetic tree`.
+Unit / integration additions (review findings):
+- `should record permission-denied dir in skipped when Scanner::scan hits
+  unreadable subtree` (chmod 000 on a child; scan completes, error surfaced).
+- `should return same cache key for /tmp/a/./b and /tmp/a/b when
+  canonicalize_key called`.
+- `should restore entry after process restart when undo journal replayed`
+  (simulate restart: drop in-memory stack, rebuild from journal).
+- `should open read-only and skip writes when cache file already open by
+  another writer` (second handle on same DB; scans still served from
+  memory).
 - `should detect deletion when incremental scan re-runs after removing
   half the files`.
 - `should detect new files when incremental scan re-runs after adding files`.
@@ -309,9 +328,14 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
   - `undo_last_delete() -> ()`
   - `reveal_in_explorer(path: String) -> ()` (cross-platform via the
     `opener` crate v5.x, which handles platform detection internally).
-- `gui/src-tauri/src/scan_runner.rs`: background-thread scan that streams
-  progress via Tauri events (`scan-progress`, `scan-done`) so UI stays
-  responsive.
+- `gui/src-tauri/src/scan_runner.rs`: `ScanRunner` is an explicit state
+  machine over `Idle → Running → Done/Cancelled → Idle`. A running scan
+  owns an immutable snapshot of `ScanResult` (via `Arc`) so
+  `delete_paths`/`undo_last_delete`/`reveal_in_explorer` never read a
+  partially-written tree; mutations are rejected with a typed error while
+  a scan is `Running`, and `cancel_scan` on a `Done` scan is a no-op
+  returning the current `ScanId`. Background-thread scan streams progress
+  via Tauri events (`scan-progress`, `scan-done`) so UI stays responsive.
 - `gui/web/`:
   - `package.json`, `vite.config.ts`, `tsconfig.json` (strict),
     `.eslintrc.json` (`@typescript-eslint/no-explicit-any: error`,
@@ -323,6 +347,9 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
     `TreemapCanvas.tsx` (mounts an `<canvas>` and runs an egui app inside
     via `egui-wgpu` / WASM bridge — if the WASM-egui route is too heavy,
     fall back to a pure-Canvas2D treemap driven by `domain::ScanResult`),
+    `TreemapCanvas2D.tsx` (the Canvas2D fallback, built and exercised in
+    the same phase, sharing `treemap-layout` + the same IPC contract as the
+    WASM-egui route; selected at build time behind a feature flag),
     `TableView.tsx` (sortable columns: name, size, modified, type),
     `ContextMenu.tsx` (open in explorer, copy path, copy relative path),
     `StatusBar.tsx`.
@@ -392,12 +419,17 @@ adds optional cloud sync and the shipping artifacts.
 - `scan-engine/src/sync.rs` (feature-gated):
   - `pub struct AblySyncer` — owns an `ably` client, a channel per scan
     root, and a publisher that streams file events.
-  - Conflict resolution: last-write-wins by `(path, mtime)` timestamp.
+  - Conflict resolution: last-write-wins by `(path, mtime)` timestamp, with
+    **deletion tombstones** and **per-device monotonic tie-break**
+    (`(device_id, mtime)`) to avoid clock-skew and same-mtime resurrection
+    of deleted files.
 - `gui/src-tauri/src/commands.rs`: `enable_sync`, `disable_sync`,
   `set_sync_api_key` (stored in OS keyring via `keyring` crate, never
   written to disk in plaintext).
 - `gui/web/src/components/SyncStatus.tsx`: small pill in toolbar showing
-  online/offline + last-sync time.
+  online/offline + last-sync time; when no API key is configured the pill
+  renders a disabled "Sync off" state with a tooltip pointing to
+  Settings — never prompts, never auto-enables.
 - `.github/workflows/release.yml`:
   - matrix: ubuntu-latest (AppImage, .deb, .rpm, .tar.gz), macos-latest
     (.dmg, notarize stub), windows-latest (.msi, portable .exe).
@@ -412,6 +444,9 @@ Unit:
 - `should not include ably in dependency graph when sync feature disabled`.
 - `should serialize a file event when publisher called`.
 - `should pick newer mtime when local and remote event conflict`.
+- `should keep deletion when local mtime newer than remote write` (tombstone
+  precedence; no delete resurrection).
+- `should break mtime ties by device_id when two events share mtime`.
 - `should refuse to start sync when API key missing`.
 - `should not write key to disk when set_sync_api_key called` (assert
   `keyring::Entry::get_password` works and no plaintext on FS).
@@ -454,6 +489,8 @@ Packaging (Gate 1 / smoke):
 | Same-model critic leniency (MiMo=MiMo) | Medium | Medium | Per-phase small diffs (PIPELINE_AUDIT note #1); escalate to Gate 3 vision review for UI; track P2+ notes for human. |
 | Tauri v2 webview + system webkit/gtk ABI mismatch on Linux CI | High | High | docker_preflight in `pipeline.sh` already builds a toolchain image with webkit2gtk; document required `apt` packages. |
 | Ably account / API key required for Gate 3 sync test | Medium | Low | Sync feature is `#[cfg(feature = "sync")]`; tests use mocked transport when key absent; CI step is `continue-on-error` if no key in env. |
+| LWW sync: clock skew / same-mtime conflicts resurrect deleted files | Medium | Medium | Per-device monotonic tie-break + deletion tombstones (Phase 5); conflict events still surfaced in UI. |
+| Concurrent CLI + GUI open the same redb cache file | Medium | Medium | Write-once open; on `lock_error` reopen read-only and skip writes for the session (Phase 2). |
 | 100k files <2 s target on slow CI runners | Low | Medium | Performance gate is dev-machine + manual log assertion, not a hard CI test; documented. |
 
 ---

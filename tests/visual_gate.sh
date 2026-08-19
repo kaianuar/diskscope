@@ -26,7 +26,7 @@ set -uo pipefail
 cd "${GATE3_CWD:-$(pwd)}"
 
 GATE3_START="${GATE3_START:-}"              # command to start the app (required)
-VISION_MODEL="${GOOGLE_VISION_MODEL:-google/gemini-3.7-flash}"      # vision model (CommandCode, multimodal)
+VISION_MODEL="${GOOGLE_VISION_MODEL:-xiaomi/mimo-v2.5}"      # vision model (CommandCode, multimodal)
 VISION_TIMEOUT="${VISION_TIMEOUT:-180}"
 SHOTS_DIR="${GATE3_SHOTS:-/tmp/gate3_shots}"
 SPEC_DIR="${GATE3_SPEC:-tests/e2e}"
