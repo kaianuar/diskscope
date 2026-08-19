@@ -44,7 +44,7 @@ pub fn delete_paths(
     paths: Vec<String>,
     runner: State<'_, ScanRunner>,
 ) -> Result<(), CommandErrorDto> {
-    if runner.has_result() {
+    if runner.is_running() {
         return Err(CommandErrorDto::ScanInProgress(
             "scan in progress".into(),
         ));
@@ -59,7 +59,7 @@ pub fn delete_paths(
 /// when the undo stack is empty.
 #[tauri::command]
 pub fn undo_last_delete(runner: State<'_, ScanRunner>) -> Result<(), CommandErrorDto> {
-    if runner.has_result() {
+    if runner.is_running() {
         return Err(CommandErrorDto::ScanInProgress(
             "scan in progress".into(),
         ));

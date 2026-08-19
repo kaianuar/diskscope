@@ -6,13 +6,14 @@ import { useCallback, useMemo, useState } from 'react';
 import { useScan } from './hooks/useScan';
 import { useSelection } from './hooks/useSelection';
 import { useShortcuts } from './hooks/useShortcuts';
-import { deletePaths, revealInExplorer, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
+import { deletePaths, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
 import { TreemapCanvas2D } from './components/TreemapCanvas2D';
 import { TableView } from './components/TableView';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { FilterPanel } from './components/FilterPanel';
 import { StatusBar } from './components/StatusBar';
+import { ContextMenu } from './components/ContextMenu';
 
 export function App() {
   const scan = useScan();
@@ -21,6 +22,7 @@ export function App() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter | undefined>(undefined);
+  const [ctxMenu, setCtxMenu] = useState<{ path: string; x: number; y: number } | null>(null);
 
   const currentEntries = useMemo(() => {
     const root = scan.result?.root ?? null;
@@ -84,6 +86,14 @@ export function App() {
     [sortColumn],
   );
 
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, path: string) => {
+      e.preventDefault();
+      setCtxMenu({ path, x: e.clientX, y: e.clientY });
+    },
+    [],
+  );
+
   useShortcuts({
     onMove: selection.move,
     onEnter: () => {
@@ -132,6 +142,7 @@ export function App() {
             sortDirection={sortDirection}
             onSort={handleSort}
             onActivate={(entry) => handleActivate({ node: entry })}
+            onContextMenu={handleContextMenu}
           />
         </div>
         <StatusBar
@@ -140,6 +151,16 @@ export function App() {
           path={currentPath ?? scan.result?.root.path ?? null}
         />
       </div>
+      {ctxMenu && scan.result && (
+        <ContextMenu
+          path={ctxMenu.path}
+          rootPath={scan.result.root.path}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onError={scan.setError}
+        />
+      )}
     </div>
   );
 }

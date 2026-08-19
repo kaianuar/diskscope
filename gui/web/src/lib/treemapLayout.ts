@@ -51,9 +51,13 @@ export interface LayoutOptions {
 //
 // Algorithm (Bruls, Huizing, van Wijk 2000):
 //   1. Sort entries by size descending.
-//   2. Greedily grow a row while adding the next entry does not worsen
+//   2. Greadily grow a row while adding the next entry does not worsen
 //      the worst aspect ratio; when it does, lay the row out along the
 //      shorter side, slice it off, and continue with the remainder.
+//
+// Single-pass: no recursion within emitRow. The remaining rectangle is
+// updated in-place after each row is laid out, and the outer loop
+// continues into it.
 export function squarify(
   entries: TreeNode[],
   rect: Rect,
@@ -69,15 +73,16 @@ export function squarify(
   const area = rect.width * rect.height;
   const scale = area / total;
 
-  // Layout rows along the shorter side.
-  let horizontal = rect.width >= rect.height;
+  // Mutable rectangle that shrinks as rows are laid out.
+  let cur: Rect = { ...rect };
+  let horizontal = cur.width >= cur.height;
 
   let row: TreeNode[] = [];
   let rowSum = 0;
 
   const worst = (r: TreeNode[], sum: number): number => {
     if (r.length === 0 || sum <= 0) return Infinity;
-    const length = horizontal ? rect.width : rect.height;
+    const length = horizontal ? cur.width : cur.height;
     const thickness = (sum * scale) / length;
     if (thickness <= 0) return Infinity;
     const cellLens = r.map((n) => (n.size * scale) / thickness);
@@ -89,27 +94,23 @@ export function squarify(
   const emitRow = (r: TreeNode[], sum: number): void => {
     if (r.length === 0 || sum <= 0) return;
     const rowArea = sum * scale;
-    const length = horizontal ? rect.width : rect.height;
+    const length = horizontal ? cur.width : cur.height;
     const thickness = rowArea / length;
     if (thickness <= 0) return;
     let cursor = 0;
     for (const node of r) {
       const cellLen = (node.size * scale) / thickness;
       const cellRect: Rect = horizontal
-        ? { x: rect.x + cursor, y: rect.y, width: cellLen, height: thickness }
-        : { x: rect.x, y: rect.y + cursor, width: thickness, height: cellLen };
+        ? { x: cur.x + cursor, y: cur.y, width: cellLen, height: thickness }
+        : { x: cur.x, y: cur.y + cursor, width: thickness, height: cellLen };
       out.push({ node, rect: cellRect, depth, index: out.length });
       cursor += cellLen;
     }
-    // Slice the laid strip off and recurse into the remainder.
-    const remainder: Rect = horizontal
-      ? { x: rect.x, y: rect.y + thickness, width: rect.width, height: rect.height - thickness }
-      : { x: rect.x + thickness, y: rect.y, width: rect.width - thickness, height: rect.height };
-    const rest = sorted.slice(sorted.indexOf(r[0]) + r.length, sorted.length);
-    const restSum = rest.reduce((s, n) => s + n.size, 0);
-    if (rest.length > 0 && restSum > 0) {
-      squarify(rest, remainder, depth + 1, out);
-    }
+    // Slice the laid strip off the current rectangle.
+    cur = horizontal
+      ? { x: cur.x, y: cur.y + thickness, width: cur.width, height: cur.height - thickness }
+      : { x: cur.x + thickness, y: cur.y, width: cur.width - thickness, height: cur.height };
+    horizontal = cur.width >= cur.height;
   };
 
   for (const node of sorted) {
@@ -121,8 +122,6 @@ export function squarify(
       emitRow(row, rowSum);
       row = [node];
       rowSum = node.size;
-      // The remainder rect changed; recompute orientation for the next row.
-      horizontal = rect.width >= rect.height;
     }
   }
   if (row.length > 0) emitRow(row, rowSum);

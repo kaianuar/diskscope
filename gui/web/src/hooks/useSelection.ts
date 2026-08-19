@@ -31,8 +31,8 @@ export function useSelection(entries: FileNode[]): Selection {
     (delta: number) => {
       if (entries.length === 0) return;
       setFocusedIndex((prev) => {
-        if (prev === null) return 0;
-        const next = prev + delta;
+        const base = prev ?? 0;
+        const next = base + delta;
         if (next < 0) return 0;
         if (next >= entries.length) return entries.length - 1;
         return next;

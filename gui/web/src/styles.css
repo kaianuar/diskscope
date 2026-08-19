@@ -155,3 +155,30 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-muted);
+  border-radius: var(--ds-radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: var(--ds-spacing-xs) 0;
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--ds-spacing-xs) var(--ds-spacing-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  font-size: 13px;
+  color: var(--ds-text);
+}
+
+.context-menu button:hover {
+  background: var(--ds-primary);
+}

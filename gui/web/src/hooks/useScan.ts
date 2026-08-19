@@ -41,6 +41,10 @@ export function useScan(): UseScanResult {
         if (cancelled) return;
         if (e.payload && typeof e.payload.error === 'string') {
           setError(e.payload.error);
+          setResult(null);
+        } else if (e.payload && typeof e.payload === 'object' && 'root' in e.payload) {
+          setError(null);
+          setResult(e.payload as unknown as ScanResult);
         } else {
           setError(null);
         }

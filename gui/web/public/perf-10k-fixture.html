@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DiskScope — 10k Performance Fixture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f172a; font-family: system-ui, sans-serif; color: #e2e8f0; }
+    .app-shell { min-height: 100vh; }
+    .treemap-canvas { display: block; margin: 20px auto; border: 1px solid #334155; }
+    [data-testid="status-summary"] { display: block; text-align: center; margin: 8px; font-size: 14px; }
+    [data-testid="perf-time"] { display: block; text-align: center; margin: 4px; font-size: 13px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="app-shell" data-testid="app-shell">
+    <canvas data-testid="treemap-canvas" class="treemap-canvas" width="1920" height="1080"></canvas>
+    <div data-testid="status-summary" id="summary"></div>
+    <div data-testid="perf-time" id="perf-time"></div>
+  </div>
+
+  <script>
+    var TYPES = ['audio', 'video', 'image', 'document', 'code', 'archive', 'other'];
+    var EXTS = {
+      audio: ['mp3', 'wav', 'flac'], video: ['mp4', 'mkv', 'avi'],
+      image: ['jpg', 'png', 'gif'], document: ['pdf', 'docx', 'txt'],
+      code: ['rs', 'py', 'ts'], archive: ['zip', 'tar', 'gz'], other: ['dat', 'bin', 'log']
+    };
+    var COLORS = {
+      audio: '#2563eb', video: '#f59e0b', image: '#22c55e', document: '#ef4444',
+      code: '#e2e8f0', archive: '#94a3b8', directory: '#1e293b', other: '#475569'
+    };
+
+    function seededRandom(seed) {
+      var s = seed;
+      return function() { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+    }
+    var rand = seededRandom(42);
+
+    var ROOT_PATH = '/home/user/projects';
+    var children = [];
+    var fileCount = 0;
+    var totalSize = 0;
+
+    for (var d = 0; d < 50; d++) {
+      var dirPath = ROOT_PATH + '/dir_' + d;
+      var dirChildren = [];
+      var dirSize = 0;
+      for (var f = 0; f < 200; f++) {
+        var type = TYPES[Math.floor(rand() * TYPES.length)];
+        var exts = EXTS[type];
+        var ext = exts[Math.floor(rand() * exts.length)];
+        var size = Math.floor(rand() * 100000) + 100;
+        dirChildren.push({
+          path: dirPath + '/file_' + f + '.' + ext,
+          size: size,
+          modified: Math.floor(Date.now() / 1000) - Math.floor(rand() * 86400 * 365),
+          fileType: type,
+          children: []
+        });
+        dirSize += size;
+        fileCount++;
+      }
+      children.push({
+        path: dirPath,
+        size: dirSize,
+        modified: Math.floor(Date.now() / 1000),
+        fileType: 'directory',
+        children: dirChildren
+      });
+      totalSize += dirSize;
+    }
+
+    var ROOT = {
+      path: ROOT_PATH,
+      size: totalSize,
+      modified: Math.floor(Date.now() / 1000),
+      fileType: 'directory',
+      children: children
+    };
+
+    // Iterative squarify treemap layout — avoids deep recursion on large
+    // inputs (10k entries would recurse ~5000 times in the recursive version).
+    function squarifyIter(entries, rect, depth, out) {
+      if (!entries.length || rect.width <= 0 || rect.height <= 0) return;
+      var sorted = entries.slice().sort(function(a, b) { return b.size - a.size; });
+      var idx = 0;
+      var curRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+
+      while (idx < sorted.length && curRect.width > 0 && curRect.height > 0) {
+        // Compute total remaining size.
+        var remaining = 0;
+        for (var r = idx; r < sorted.length; r++) remaining += sorted[r].size;
+        if (remaining <= 0) break;
+
+        var area = curRect.width * curRect.height;
+        var scale = area / remaining;
+        var horizontal = curRect.width >= curRect.height;
+        var length = horizontal ? curRect.width : curRect.height;
+
+        // Build the best row greedily.
+        var rowStart = idx;
+        var rowSum = 0;
+        var bestWorst = Infinity;
+
+        while (idx < sorted.length) {
+          var candidateSum = rowSum + sorted[idx].size;
+          var w = worstRatio(sorted, rowStart, idx - rowStart + 1, candidateSum, scale, length);
+          if (w <= bestWorst) {
+            bestWorst = w;
+            rowSum = candidateSum;
+            idx++;
+          } else {
+            break;
+          }
+        }
+
+        // Emit the row.
+        var rowEnd = idx; // exclusive
+        var rowArea = rowSum * scale;
+        var thickness = rowArea / length;
+        if (thickness <= 0) break;
+
+        var cursor = 0;
+        for (var j = rowStart; j < rowEnd; j++) {
+          var cellLen = (sorted[j].size * scale) / thickness;
+          var cellRect = horizontal
+            ? { x: curRect.x + cursor, y: curRect.y, width: cellLen, height: thickness }
+            : { x: curRect.x, y: curRect.y + cursor, width: thickness, height: cellLen };
+          out.push({ node: sorted[j], rect: cellRect, depth: depth });
+          cursor += cellLen;
+        }
+
+        // Shrink the remaining rect.
+        if (horizontal) {
+          curRect = { x: curRect.x, y: curRect.y + thickness, width: curRect.width, height: curRect.height - thickness };
+        } else {
+          curRect = { x: curRect.x + thickness, y: curRect.y, width: curRect.width - thickness, height: curRect.height };
+        }
+      }
+    }
+
+    function worstRatio(sorted, start, count, sum, scale, length) {
+      if (count <= 0 || sum <= 0) return Infinity;
+      var thickness = (sum * scale) / length;
+      if (thickness <= 0) return Infinity;
+      var minLen = Infinity, maxLen = -Infinity;
+      for (var i = start; i < start + count; i++) {
+        var cl = (sorted[i].size * scale) / thickness;
+        if (cl < minLen) minLen = cl;
+        if (cl > maxLen) maxLen = cl;
+      }
+      return Math.max(length / minLen, thickness / minLen, maxLen / minLen, thickness / maxLen);
+    }
+
+    // Flatten top-level dirs' children → 10k leaf nodes.
+    var allLeaves = [];
+    for (var i = 0; i < ROOT.children.length; i++) {
+      var dir = ROOT.children[i];
+      for (var j = 0; j < dir.children.length; j++) {
+        allLeaves.push(dir.children[j]);
+      }
+    }
+
+    var startTime = performance.now();
+
+    var canvas = document.querySelector('[data-testid="treemap-canvas"]');
+    var ctx = canvas.getContext('2d');
+    var entries = [];
+    squarifyIter(allLeaves, { x: 0, y: 0, width: canvas.width, height: canvas.height }, 0, entries);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var k = 0; k < entries.length; k++) {
+      var e = entries[k];
+      if (e.rect.width < 1 || e.rect.height < 1) continue;
+      ctx.fillStyle = COLORS[e.node.fileType] || COLORS.other;
+      ctx.fillRect(e.rect.x, e.rect.y, e.rect.width, e.rect.height);
+    }
+
+    var elapsed = performance.now() - startTime;
+
+    window.__fileCount = fileCount;
+    window.__renderMs = Math.round(elapsed);
+    window.__entryCount = entries.length;
+
+    document.getElementById('summary').textContent = totalSize + ' B \u00b7 ' + fileCount.toLocaleString() + ' entries \u00b7 ' + Math.round(elapsed) + ' ms';
+    document.getElementById('perf-time').textContent = 'Layout + render: ' + Math.round(elapsed) + ' ms (' + entries.length + ' treemap cells)';
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

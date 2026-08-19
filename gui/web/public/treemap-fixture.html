@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DiskScope — Treemap Fixture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f172a; font-family: system-ui, sans-serif; color: #e2e8f0; }
+    .treemap-canvas { display: block; margin: 20px auto; border: 1px solid #334155; }
+    [data-testid="status-summary"] { display: block; text-align: center; margin: 8px; font-size: 14px; }
+    [data-testid="app-shell"] { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div data-testid="app-shell">
+    <canvas data-testid="treemap-canvas" class="treemap-canvas" width="800" height="600"></canvas>
+    <div data-testid="status-summary" id="summary"></div>
+  </div>
+  <script>
+    // Fixture: a scan result with mixed file types and sizes.
+    // Mirrors the shape of domain::ScanResult → gui/web/src/ipc.ts ScanResult.
+    var FILE_TYPE_COLORS = {
+      audio:    '#2563eb',
+      video:    '#f59e0b',
+      image:    '#22c55e',
+      document: '#ef4444',
+      code:     '#e2e8f0',
+      archive:  '#94a3b8',
+      directory:'#1e293b',
+      other:    '#475569'
+    };
+
+    var FIXTURE_ROOT = {
+      path: '/home/user/projects',
+      size: 1000,
+      modified: Date.now() / 1000,
+      fileType: 'directory',
+      children: [
+        { path: '/home/user/projects/app.mp4', size: 500, modified: Date.now() / 1000, fileType: 'video', children: [] },
+        { path: '/home/user/projects/photo.jpg', size: 200, modified: Date.now() / 1000, fileType: 'image', children: [] },
+        { path: '/home/user/projects/main.rs', size: 150, modified: Date.now() / 1000, fileType: 'code', children: [] },
+        { path: '/home/user/projects/notes.md', size: 100, modified: Date.now() / 1000, fileType: 'document', children: [] },
+        { path: '/home/user/projects/song.mp3', size: 50, modified: Date.now() / 1000, fileType: 'audio', children: [] }
+      ]
+    };
+
+    // Squarify treemap layout — mirrors gui/web/src/lib/treemapLayout.ts
+    function squarify(entries, rect, depth, out) {
+      if (!entries.length || rect.width <= 0 || rect.height <= 0) return;
+      var sorted = entries.slice().sort(function(a, b) { return b.size - a.size; });
+      var total = 0;
+      for (var i = 0; i < sorted.length; i++) total += sorted[i].size;
+      if (total <= 0) return;
+
+      var area = rect.width * rect.height;
+      var scale = area / total;
+      var horizontal = rect.width >= rect.height;
+      var row = [], rowSum = 0;
+
+      function worst(r, sum) {
+        if (!r.length || sum <= 0) return Infinity;
+        var length = horizontal ? rect.width : rect.height;
+        var thickness = (sum * scale) / length;
+        if (thickness <= 0) return Infinity;
+        var minLen = Infinity, maxLen = -Infinity;
+        for (var j = 0; j < r.length; j++) {
+          var cl = (r[j].size * scale) / thickness;
+          if (cl < minLen) minLen = cl;
+          if (cl > maxLen) maxLen = cl;
+        }
+        return Math.max(length / minLen, thickness / minLen, maxLen / minLen, thickness / maxLen);
+      }
+
+      function emitRow(r, sum) {
+        if (!r.length || sum <= 0) return;
+        var rowArea = sum * scale;
+        var length = horizontal ? rect.width : rect.height;
+        var thickness = rowArea / length;
+        if (thickness <= 0) return;
+        var cursor = 0;
+        for (var j = 0; j < r.length; j++) {
+          var cellLen = (r[j].size * scale) / thickness;
+          var cellRect = horizontal
+            ? { x: rect.x + cursor, y: rect.y, width: cellLen, height: thickness }
+            : { x: rect.x, y: rect.y + cursor, width: thickness, height: cellLen };
+          out.push({ node: r[j], rect: cellRect, depth: depth, index: out.length });
+          cursor += cellLen;
+        }
+        var remainder = horizontal
+          ? { x: rect.x, y: rect.y + thickness, width: rect.width, height: rect.height - thickness }
+          : { x: rect.x + thickness, y: rect.y, width: rect.width - thickness, height: rect.height };
+        var rest = sorted.slice(sorted.indexOf(r[0]) + r.length);
+        var restSum = 0;
+        for (var k = 0; k < rest.length; k++) restSum += rest[k].size;
+        if (rest.length > 0 && restSum > 0) squarify(rest, remainder, depth + 1, out);
+      }
+
+      for (var n = 0; n < sorted.length; n++) {
+        var node = sorted[n];
+        var candidateSum = rowSum + node.size;
+        if (!row.length || worst(row.concat([node]), candidateSum) <= worst(row, rowSum)) {
+          row.push(node);
+          rowSum = candidateSum;
+        } else {
+          emitRow(row, rowSum);
+          row = [node];
+          rowSum = node.size;
+          horizontal = rect.width >= rect.height;
+        }
+      }
+      if (row.length > 0) emitRow(row, rowSum);
+    }
+
+    function layoutTreemap(root, width, height) {
+      var out = [];
+      squarify(root.children, { x: 0, y: 0, width: width, height: height }, 0, out);
+      return out;
+    }
+
+    // Render the treemap on the canvas.
+    var canvas = document.querySelector('[data-testid="treemap-canvas"]');
+    var ctx = canvas.getContext('2d');
+    var entries = layoutTreemap(FIXTURE_ROOT, canvas.width, canvas.height);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.rect.width < 1 || e.rect.height < 1) continue;
+      ctx.fillStyle = FILE_TYPE_COLORS[e.node.fileType] || FILE_TYPE_COLORS.other;
+      ctx.fillRect(e.rect.x, e.rect.y, e.rect.width, e.rect.height);
+    }
+
+    // Status summary — mirrors StatusBar.tsx format.
+    var totalSize = FIXTURE_ROOT.size;
+    var fileCount = FIXTURE_ROOT.children.length;
+    var summary = document.getElementById('summary');
+    summary.textContent = totalSize + ' B \u00b7 ' + fileCount + ' entries \u00b7 42 ms';
+
+    // Signal readiness for Playwright.
+    window.__treemapReady = true;
+  </script>
+</body>
+</html>

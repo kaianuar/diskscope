@@ -54,7 +54,8 @@ flowchart LR
 > we split the pure domain layer into its own crate to enforce hexagonal
 > isolation (zero external deps, ports as traits). The "3 crates" in the
 > requirements refers to the *adapter* crates. This reconciliation is
-> restated in the root `Cargo.toml` package description and README so
+> restated verbatim in the root `Cargo.toml` (`# domain is pure domain
+> crate (zero deps), 3 adapter crates per requirements`) and README so
 > reviewers don't misread `domain` as an adapter crate.
 
 > **Pinned versions (GUIDELINES floor):** Tauri v2.1, React 18.3,
@@ -63,6 +64,14 @@ flowchart LR
 > `Cargo.lock` is committed; `cargo` may resolve newer semver-compatible
 > releases (e.g. current lockfile has redb 4.2, trash 5.2, jwalk 0.9).
 > Where the plan cites a crate without a version, it means "as locked".
+>
+> **Breaking-API upgrades across lockfile floors:** GUIDELINES floors (e.g.
+> redb 2.1) and the locked versions (redb 4.x) can differ by a breaking
+> API — `redb 2.x → 4.x` changes the bincode table schema. The cache table
+> therefore carries a `schema_version` key; on deserialize error or
+> version mismatch, `Cache::get` treats the entry as a miss and rewrites
+> the table (migrate-or-invalidate), so an old DB file after a `cargo
+> update` can never panic or serve stale scans. Implemented in Phase 2.
 
 **Architecture justification**
 - **Rust** over Go/C++/Zig: memory safety + zero-cost abstractions for the
@@ -99,7 +108,9 @@ quality. No scanning, no UI, no I/O. Zero external deps. Pure-Rust only.
 ### Deliverables
 - `Cargo.toml` (workspace root): `[workspace] members = ["domain",
   "scan-engine", "cli", "gui"]`, resolver = "2", shared `rust-version`,
-  shared MSRV = "1.75".
+  shared MSRV = "1.77" (Tauri v2.1 / egui 0.31 require ≥1.77; pinned
+  deliberately in Phase 1 and verified by `cargo check --workspace` on the
+  Linux CI image before the phase is marked done).
 - `domain/Cargo.toml`: package metadata; `[lib]`; **no** runtime deps.
 - `domain/src/lib.rs`: keep and harden the existing `FileType`, `DomainError`,
   `FileNode`, `ScanResult`, `Filter`, `SortSpec`, `format_size`; add
@@ -188,10 +199,13 @@ directory tree.
   - Cache keys are canonicalized: absolute, trailing separator stripped
     (dedupe `./`/`..`), so `foo/` ≡ `foo`. Case normalization is
     **platform-dependent and explicit**: on Windows/macOS (case-insensitive
-    FS) the canonical key is lowercased (`to_lowercase`); on Linux it is
-    preserved. The rule lives in one `canonicalize_key(path)` function so
-    case-variant paths never produce distinct keys on case-insensitive FS
-    (which would defeat invalidation).
+    FS) the canonical key is lowercased (`to_ascii_lowercase`); on Linux
+    it is preserved. The rule lives in one `canonicalize_key(path)`
+    function so case-variant paths never produce distinct keys on
+    case-insensitive FS (which would defeat invalidation). Limitation
+    documented in code: `to_ascii_lowercase` is deliberate — full Unicode
+    case-folding (e.g. `ß`/`SS`) is out of scope for MVP file paths; the
+    function name and doc comment state ASCII-only folding.
   - **Dependency injection:** `JwalkScanner`/`RedbCache`/`TrashBin` are
     never referenced by name in `cli`/`gui`. Those binaries depend only on
     the `domain::ports` traits (`Scanner`, `Cache`, `Trash`) and receive a
@@ -201,7 +215,10 @@ directory tree.
     fatal.
 - `scan-engine/src/cache.rs`:
   - `pub struct RedbCache` impl `Cache` using `redb` embedded DB
-    (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`),
+    (`tables: scans (key: path, value: (mtime, size, ScanResult bincode))`,
+    plus a `schema_version` key — see the lockfile-drift note in
+    Architecture; on version mismatch or deserialize error the table is
+    invalidated and rebuilt),
     plus the `CACHE_TTL_SECS` constant above.
   - `invalidate(path)` removes the key (and any child prefixes via range
     delete — exact prefix scan needed for rescan correctness).
@@ -211,8 +228,14 @@ directory tree.
     skipped for that session). The write-skip is **never silent**: the
     session surfaces a typed `DomainError::CacheUnavailable` once, which
     the CLI prints to stderr (exit code unchanged) and the GUI shows as a
-    toast/log line in the status bar. Undo journal (Phase 2) uses the same
-    policy.
+    toast/log line in the status bar. **No long-lived stale cache:** the
+    read-only mode is a fallback, not a session default — if the other
+    writer is gone, the next `Cache::get` (triggered by the next
+    `scan()`) retries the write-open once before serving; only if the
+    lock is still held does the session stay read-only, and the surfaced
+    `CacheUnavailable` message says "restart to re-enable writes" (shown
+    in the GUI status bar tooltip / CLI stderr line). Undo journal
+    (Phase 2) uses the same policy.
 - `scan-engine/src/trash.rs`:
   - `pub struct TrashBin` impl `Trash` backed by `trash` crate; maintains
     a **persisted undo journal** (same redb file) of
@@ -230,7 +253,10 @@ directory tree.
   Doc comment: *ScanService is the single entry point for CLI/GUI access to
   scan-engine — consumers never instantiate individual adapters directly.
   It is a convenience composition of scan-engine adapters (adapter-layer
-  wiring); domain logic stays in `domain::*` traits.*
+  wiring); domain logic stays in `domain::*` traits. `cli`/`gui` never
+  `use scan_engine::JwalkScanner` (or `RedbCache`/`TrashBin`) by name —
+  they call `ScanService::new(impl Scanner, impl Cache, impl Trash)`, so a
+  Gate 2 DI audit is a one-line grep.*
 - `#![deny(clippy::all)]`, `#![deny(missing_docs)]`, no `unwrap()` in prod.
 - Update `.gitignore` for any cache files the engine writes to temp dirs.
 
@@ -267,6 +293,11 @@ Unit / integration additions (review findings):
 - `should open read-only and skip writes when cache file already open by
   another writer` (second handle on same DB; scans still served from
   memory).
+- `should retry write-open and recover when lock released before next
+  scan` (drop first writer, re-scan, assert writes resume — no stale
+  cache across sessions).
+- `should invalidate and rebuild table when schema_version mismatches`
+  (old-format DB file; `Cache::get` returns miss, rescan rewrites).
 - `should detect deletion when incremental scan re-runs after removing
   half the files`.
 - `should detect new files when incremental scan re-runs after adding files`.
@@ -393,6 +424,12 @@ No Ably sync yet (Phase 5). All keyboard shortcuts and context menu wired.
   - `src/hooks/useScan.ts`, `useSelection.ts`, `useShortcuts.ts`
     (arrows/enter/backspace/Delete/Cmd/Ctrl+Z).
   - `src/ipc.ts`: typed wrapper around `invoke()` for the Tauri commands.
+    **IPC contract versioning:** every command payload carries a
+    `protocol_version: 1` field (in a shared `IpcEnvelope<T>`);
+    `commands.rs` rejects mismatched versions with a typed error instead
+    of deserializing garbage. Bumping `protocol_version` is mandatory when
+    any `domain` type in the payload changes shape — prevents silent
+    desync between Rust `serde` types and TypeScript `strict` types.
   - Vitest unit tests for hooks + pure components.
 - `tests/e2e/` (Playwright spec for Gate 3):
   - `playwright.config.ts`

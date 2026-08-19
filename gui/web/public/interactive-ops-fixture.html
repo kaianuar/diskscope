@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DiskScope — Interactive Ops Fixture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f172a; font-family: system-ui, sans-serif; color: #e2e8f0; }
+    .app-shell { display: flex; min-height: 100vh; }
+    .app-sidebar { width: 200px; background: #1e293b; padding: 12px; }
+    .app-sidebar h2 { font-size: 16px; margin-bottom: 12px; }
+    .app-sidebar input { width: 100%; padding: 6px; margin-bottom: 8px; background: #334155; border: 1px solid #475569; color: #e2e8f0; border-radius: 4px; }
+    .app-sidebar button { width: 100%; padding: 6px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .app-main { flex: 1; display: flex; flex-direction: column; }
+    .app-content { flex: 1; display: flex; flex-direction: column; padding: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #334155; }
+    th { background: #1e293b; cursor: pointer; user-select: none; }
+    tr { cursor: pointer; }
+    tr:hover { background: #1e293b; }
+    tr.selected { background: #2563eb33; outline: 1px solid #2563eb; }
+    tr.deleted { display: none; }
+    .status-bar { padding: 8px 12px; background: #1e293b; font-size: 13px; border-top: 1px solid #334155; }
+    [data-testid="status-path"] { margin-right: 12px; }
+    [data-testid="status-summary"] { color: #94a3b8; }
+    .treemap-canvas { display: block; margin: 0 0 12px; border: 1px solid #334155; width: 100%; height: 300px; }
+  </style>
+</head>
+<body>
+  <div class="app-shell" data-testid="app-shell">
+    <div class="app-sidebar">
+      <h2>DiskScope</h2>
+      <input data-testid="scan-path-input" type="text" value="/home/user/projects" readonly />
+      <button data-testid="start-scan">Scan</button>
+    </div>
+    <div class="app-main">
+      <div class="app-content">
+        <canvas data-testid="treemap-canvas" class="treemap-canvas" width="800" height="300"></canvas>
+        <table data-testid="file-table">
+          <thead>
+            <tr>
+              <th role="columnheader" aria-sort="none">Name</th>
+              <th role="columnheader" aria-sort="none">Size</th>
+              <th role="columnheader" aria-sort="none">Modified</th>
+              <th role="columnheader" aria-sort="none">Type</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="status-bar" data-testid="status-bar">
+        <span data-testid="status-path" id="status-path"></span>
+        <span data-testid="status-summary" id="status-summary"></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // File tree fixture with directories and files.
+    var FILE_TREE = {
+      '/home/user/projects': {
+        entries: [
+          { path: '/home/user/projects/src', fileType: 'directory', size: 500, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/docs', fileType: 'directory', size: 200, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/app.mp4', fileType: 'video', size: 800, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/photo.jpg', fileType: 'image', size: 300, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/main.rs', fileType: 'code', size: 150, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/song.mp3', fileType: 'audio', size: 50, modified: Date.now() / 1000 }
+        ]
+      },
+      '/home/user/projects/src': {
+        entries: [
+          { path: '/home/user/projects/src/lib.rs', fileType: 'code', size: 200, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/src/main.rs', fileType: 'code', size: 180, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/src/utils.rs', fileType: 'code', size: 120, modified: Date.now() / 1000 }
+        ]
+      },
+      '/home/user/projects/docs': {
+        entries: [
+          { path: '/home/user/projects/docs/readme.md', fileType: 'document', size: 80, modified: Date.now() / 1000 },
+          { path: '/home/user/projects/docs/api.md', fileType: 'document', size: 120, modified: Date.now() / 1000 }
+        ]
+      }
+    };
+
+    var currentPath = '/home/user/projects';
+    var focusedIndex = -1;
+    var deletedStack = []; // { entry, parentPath }
+    var currentEntries = [];
+
+    window.__currentPath = currentPath;
+    window.__deleted = deletedStack;
+    window.__entries = currentEntries;
+
+    // Color map.
+    var COLORS = {
+      audio: '#2563eb', video: '#f59e0b', image: '#22c55e', document: '#ef4444',
+      code: '#e2e8f0', archive: '#94a3b8', directory: '#1e293b', other: '#475569'
+    };
+
+    function renderTable() {
+      var node = FILE_TREE[currentPath];
+      if (!node) return;
+      currentEntries = node.entries.slice();
+      window.__entries = currentEntries;
+      var tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      for (var i = 0; i < currentEntries.length; i++) {
+        var entry = currentEntries[i];
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-testid', 'table-row');
+        tr.setAttribute('data-path', entry.path);
+        tr.setAttribute('data-file-type', entry.fileType);
+        tr.setAttribute('data-index', String(i));
+        if (i === focusedIndex) tr.classList.add('selected');
+        var name = entry.path.split('/').filter(Boolean).pop() || entry.path;
+        tr.innerHTML =
+          '<td>' + name + '</td>' +
+          '<td>' + entry.size + ' B</td>' +
+          '<td>' + new Date(entry.modified * 1000).toLocaleString() + '</td>' +
+          '<td>' + entry.fileType.charAt(0).toUpperCase() + entry.fileType.slice(1) + '</td>';
+        tr.addEventListener('dblclick', (function(e) {
+          return function() { activateEntry(e); };
+        })(entry));
+        tbody.appendChild(tr);
+      }
+      updateStatus();
+    }
+
+    function activateEntry(entry) {
+      if (entry.fileType !== 'directory') return;
+      currentPath = entry.path;
+      window.__currentPath = currentPath;
+      focusedIndex = -1;
+      renderTable();
+    }
+
+    function moveFocus(delta) {
+      if (currentEntries.length === 0) return;
+      if (focusedIndex < 0) { focusedIndex = 0; }
+      else { focusedIndex = Math.max(0, Math.min(currentEntries.length - 1, focusedIndex + delta)); }
+      updateSelection();
+    }
+
+    function updateSelection() {
+      var rows = document.querySelectorAll('[data-testid="table-row"]');
+      rows.forEach(function(row, i) {
+        row.classList.toggle('selected', i === focusedIndex);
+      });
+    }
+
+    function deleteSelected() {
+      if (focusedIndex < 0 || focusedIndex >= currentEntries.length) return;
+      var entry = currentEntries[focusedIndex];
+      deletedStack.push({ entry: entry, parentPath: currentPath });
+      window.__deleted = deletedStack;
+      // Remove from current entries.
+      var node = FILE_TREE[currentPath];
+      node.entries = node.entries.filter(function(e) { return e.path !== entry.path; });
+      if (focusedIndex >= node.entries.length) focusedIndex = node.entries.length - 1;
+      renderTable();
+    }
+
+    function undoDelete() {
+      if (deletedStack.length === 0) return;
+      var item = deletedStack.pop();
+      window.__deleted = deletedStack;
+      var node = FILE_TREE[item.parentPath];
+      if (node) node.entries.push(item.entry);
+      renderTable();
+    }
+
+    function updateStatus() {
+      document.getElementById('status-path').textContent = currentPath;
+      var totalSize = 0;
+      for (var i = 0; i < currentEntries.length; i++) totalSize += currentEntries[i].size;
+      document.getElementById('status-summary').textContent = totalSize + ' B · ' + currentEntries.length + ' entries · 42 ms';
+    }
+
+    // Keyboard handler (mirrors useShortcuts.ts).
+    document.addEventListener('keydown', function(e) {
+      var target = e.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      var mod = e.metaKey || e.ctrlKey;
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          moveFocus(1);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          moveFocus(-1);
+          break;
+        case 'Enter':
+        case 'ArrowRight':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < currentEntries.length) {
+            activateEntry(currentEntries[focusedIndex]);
+          }
+          break;
+        case 'Backspace':
+        case 'ArrowLeft':
+          e.preventDefault();
+          // Navigate to parent.
+          if (currentPath !== '/home/user/projects') {
+            var parent = currentPath.slice(0, currentPath.lastIndexOf('/'));
+            if (parent.length > 0) {
+              currentPath = parent;
+              window.__currentPath = currentPath;
+              focusedIndex = -1;
+              renderTable();
+            }
+          }
+          break;
+        case 'Delete':
+          e.preventDefault();
+          deleteSelected();
+          break;
+        case 'z':
+        case 'Z':
+          if (mod) {
+            e.preventDefault();
+            undoDelete();
+          }
+          break;
+      }
+    });
+
+    // Simple treemap rendering.
+    function squarify(entries, rect, depth, out) {
+      if (!entries.length || rect.width <= 0 || rect.height <= 0) return;
+      var sorted = entries.slice().sort(function(a, b) { return b.size - a.size; });
+      var total = 0;
+      for (var i = 0; i < sorted.length; i++) total += sorted[i].size;
+      if (total <= 0) return;
+      var area = rect.width * rect.height;
+      var scale = area / total;
+      var horizontal = rect.width >= rect.height;
+      var row = [], rowSum = 0;
+      function worst(r, sum) {
+        if (!r.length || sum <= 0) return Infinity;
+        var length = horizontal ? rect.width : rect.height;
+        var thickness = (sum * scale) / length;
+        if (thickness <= 0) return Infinity;
+        var minLen = Infinity, maxLen = -Infinity;
+        for (var j = 0; j < r.length; j++) {
+          var cl = (r[j].size * scale) / thickness;
+          if (cl < minLen) minLen = cl;
+          if (cl > maxLen) maxLen = cl;
+        }
+        return Math.max(length / minLen, thickness / minLen, maxLen / minLen, thickness / maxLen);
+      }
+      function emitRow(r, sum) {
+        if (!r.length || sum <= 0) return;
+        var rowArea = sum * scale;
+        var length = horizontal ? rect.width : rect.height;
+        var thickness = rowArea / length;
+        if (thickness <= 0) return;
+        var cursor = 0;
+        for (var j = 0; j < r.length; j++) {
+          var cellLen = (r[j].size * scale) / thickness;
+          var cellRect = horizontal
+            ? { x: rect.x + cursor, y: rect.y, width: cellLen, height: thickness }
+            : { x: rect.x, y: rect.y + cursor, width: thickness, height: cellLen };
+          out.push({ node: r[j], rect: cellRect, depth: depth });
+          cursor += cellLen;
+        }
+        var rest = sorted.slice(sorted.indexOf(r[0]) + r.length);
+        var restSum = 0;
+        for (var k = 0; k < rest.length; k++) restSum += rest[k].size;
+        if (rest.length > 0 && restSum > 0) {
+          var remainder = horizontal
+            ? { x: rect.x, y: rect.y + thickness, width: rect.width, height: rect.height - thickness }
+            : { x: rect.x + thickness, y: rect.y, width: rect.width - thickness, height: rect.height };
+          squarify(rest, remainder, depth + 1, out);
+        }
+      }
+      for (var n = 0; n < sorted.length; n++) {
+        var node = sorted[n];
+        var candidateSum = rowSum + node.size;
+        if (!row.length || worst(row.concat([node]), candidateSum) <= worst(row, rowSum)) {
+          row.push(node);
+          rowSum = candidateSum;
+        } else {
+          emitRow(row, rowSum);
+          row = [node];
+          rowSum = node.size;
+          horizontal = rect.width >= rect.height;
+        }
+      }
+      if (row.length > 0) emitRow(row, rowSum);
+    }
+
+    function renderTreemap() {
+      var canvas = document.querySelector('[data-testid="treemap-canvas"]');
+      if (!canvas) return;
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      var node = FILE_TREE[currentPath];
+      if (!node) return;
+      var entries = [];
+      squarify(node.entries, { x: 0, y: 0, width: canvas.width, height: canvas.height }, 0, entries);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (e.rect.width < 1 || e.rect.height < 1) continue;
+        ctx.fillStyle = COLORS[e.node.fileType] || COLORS.other;
+        ctx.fillRect(e.rect.x, e.rect.y, e.rect.width, e.rect.height);
+      }
+    }
+
+    // Initial render.
+    renderTable();
+    renderTreemap();
+    window.__ready = true;
+  </script>
+</body>
+</html>

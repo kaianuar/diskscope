@@ -1,5 +1,6 @@
 // Sortable table of the current directory's entries.
 
+import type { MouseEvent } from 'react';
 import { useMemo } from 'react';
 import { formatSize } from '../lib/formatSize';
 import type { FileNode, SortColumn, SortDirection } from '../ipc';
@@ -11,13 +12,15 @@ export interface TableViewProps {
   sortDirection: SortDirection;
   onSort: (column: SortColumn) => void;
   onActivate: (entry: FileNode) => void;
+  /** Called on right-click with the native event and the entry's path. */
+  onContextMenu?: (e: MouseEvent, path: string) => void;
 }
 
 function typeLabel(t: FileNode['fileType']): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-export function TableView({ entries, sortColumn, sortDirection, onSort, onActivate }: TableViewProps) {
+export function TableView({ entries, sortColumn, sortDirection, onSort, onActivate, onContextMenu }: TableViewProps) {
   const sorted = useMemo(() => {
     if (!sortColumn) return entries;
     const dir = sortDirection === 'asc' ? 1 : -1;
@@ -62,6 +65,7 @@ export function TableView({ entries, sortColumn, sortDirection, onSort, onActiva
             key={entry.path}
             data-testid="table-row"
             onDoubleClick={() => onActivate(entry)}
+            onContextMenu={onContextMenu ? (e) => onContextMenu(e, entry.path) : undefined}
           >
             <td>{entry.path.split('/').filter(Boolean).pop() ?? entry.path}</td>
             <td>{formatSize(entry.size)}</td>

@@ -94,6 +94,11 @@ impl ScanRunner {
         self.state.lock().is_done()
     }
 
+    /// True when a scan is currently in flight on the background thread.
+    pub fn is_running(&self) -> bool {
+        matches!(&*self.state.lock(), ScanState::Running { .. })
+    }
+
     /// Snapshot of the finished scan, if any.
     pub fn result(&self) -> Option<Arc<ScanResult>> {
         match &*self.state.lock() {

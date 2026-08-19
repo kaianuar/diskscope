@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DiskScope — Context Menu Fixture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f172a; font-family: system-ui, sans-serif; color: #e2e8f0; }
+    .app-shell { min-height: 100vh; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #334155; }
+    th { background: #1e293b; }
+    tr { cursor: pointer; }
+    tr:hover { background: #1e293b; }
+    .context-menu {
+      position: fixed; background: #1e293b; border: 1px solid #475569;
+      border-radius: 6px; padding: 4px; z-index: 1000; min-width: 180px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .context-menu button {
+      display: block; width: 100%; text-align: left; padding: 8px 12px;
+      background: none; border: none; color: #e2e8f0; cursor: pointer;
+      border-radius: 4px; font-size: 14px;
+    }
+    .context-menu button:hover { background: #2563eb33; }
+    .status-bar { padding: 8px 12px; background: #1e293b; font-size: 13px; border-top: 1px solid #334155; }
+  </style>
+</head>
+<body>
+  <div class="app-shell" data-testid="app-shell">
+    <table data-testid="file-table">
+      <thead>
+        <tr>
+          <th>Name</th><th>Size</th><th>Modified</th><th>Type</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+    <div id="context-menu-slot"></div>
+    <div class="status-bar" data-testid="status-bar">
+      <span data-testid="status-path">/home/user/projects</span>
+    </div>
+  </div>
+
+  <script>
+    // IPC log: records every "IPC" call for test assertions.
+    window.__ipcLog = [];
+
+    // Simulated clipboard (navigator.clipboard.writeText may be blocked in
+    // headless Playwright without permissions; we polyfill it).
+    window.__clipboardText = '';
+    if (!navigator.clipboard) {
+      navigator.clipboard = {};
+    }
+    var origWriteText = navigator.clipboard.writeText;
+    navigator.clipboard.writeText = function(text) {
+      window.__clipboardText = text;
+      window.__ipcLog.push({ fn: 'clipboard.writeText', args: [text] });
+      return Promise.resolve();
+    };
+
+    // Mock reveal: simulates opener::reveal.
+    window.__revealPath = null;
+    function mockReveal(path) {
+      window.__revealPath = path;
+      window.__ipcLog.push({ fn: 'reveal_in_explorer', args: [path] });
+    }
+
+    var ENTRIES = [
+      { path: '/home/user/projects/src', fileType: 'directory', size: 500, modified: Date.now() / 1000 },
+      { path: '/home/user/projects/app.mp4', fileType: 'video', size: 800, modified: Date.now() / 1000 },
+      { path: '/home/user/projects/main.rs', fileType: 'code', size: 150, modified: Date.now() / 1000 }
+    ];
+
+    function renderTable() {
+      var tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      for (var i = 0; i < ENTRIES.length; i++) {
+        var entry = ENTRIES[i];
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-testid', 'table-row');
+        tr.setAttribute('data-path', entry.path);
+        var name = entry.path.split('/').filter(Boolean).pop() || entry.path;
+        tr.innerHTML =
+          '<td>' + name + '</td>' +
+          '<td>' + entry.size + ' B</td>' +
+          '<td>' + new Date(entry.modified * 1000).toLocaleString() + '</td>' +
+          '<td>' + entry.fileType.charAt(0).toUpperCase() + entry.fileType.slice(1) + '</td>';
+        // Right-click handler.
+        tr.addEventListener('contextmenu', (function(path) {
+          return function(e) {
+            e.preventDefault();
+            showContextMenu(path, e.clientX, e.clientY);
+          };
+        })(entry.path));
+        tbody.appendChild(tr);
+      }
+    }
+
+    var activeMenu = null;
+
+    function showContextMenu(path, x, y) {
+      closeContextMenu();
+      var menu = document.createElement('div');
+      menu.className = 'context-menu';
+      menu.setAttribute('data-testid', 'context-menu');
+      menu.setAttribute('role', 'menu');
+      menu.style.left = x + 'px';
+      menu.style.top = y + 'px';
+
+      var revealBtn = document.createElement('button');
+      revealBtn.setAttribute('role', 'menuitem');
+      revealBtn.setAttribute('data-testid', 'ctx-reveal');
+      revealBtn.textContent = 'Reveal in Explorer';
+      revealBtn.addEventListener('click', function() {
+        mockReveal(path);
+        closeContextMenu();
+      });
+      menu.appendChild(revealBtn);
+
+      var copyBtn = document.createElement('button');
+      copyBtn.setAttribute('role', 'menuitem');
+      copyBtn.setAttribute('data-testid', 'ctx-copy-path');
+      copyBtn.textContent = 'Copy Path';
+      copyBtn.addEventListener('click', function() {
+        // Both clipboard + IPC log.
+        navigator.clipboard.writeText(path);
+        closeContextMenu();
+      });
+      menu.appendChild(copyBtn);
+
+      var copyRelBtn = document.createElement('button');
+      copyRelBtn.setAttribute('role', 'menuitem');
+      copyRelBtn.setAttribute('data-testid', 'ctx-copy-relative');
+      copyRelBtn.textContent = 'Copy Relative Path';
+      copyRelBtn.addEventListener('click', function() {
+        var rootPath = '/home/user/projects';
+        var rel = path.startsWith(rootPath + '/') ? path.slice(rootPath.length + 1) : path;
+        navigator.clipboard.writeText(rel);
+        closeContextMenu();
+      });
+      menu.appendChild(copyRelBtn);
+
+      document.getElementById('context-menu-slot').appendChild(menu);
+      activeMenu = menu;
+
+      // Close on outside click.
+      setTimeout(function() {
+        document.addEventListener('mousedown', onOutsideClick);
+        document.addEventListener('keydown', onEscape);
+      }, 0);
+    }
+
+    function closeContextMenu() {
+      if (activeMenu) {
+        activeMenu.remove();
+        activeMenu = null;
+      }
+      document.removeEventListener('mousedown', onOutsideClick);
+      document.removeEventListener('keydown', onEscape);
+    }
+
+    function onOutsideClick(e) {
+      if (activeMenu && !activeMenu.contains(e.target)) closeContextMenu();
+    }
+
+    function onEscape(e) {
+      if (e.key === 'Escape') closeContextMenu();
+    }
+
+    renderTable();
+    window.__ready = true;
+  </script>
+</body>
+</html>
