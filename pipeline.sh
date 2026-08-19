@@ -430,6 +430,7 @@ for PHASE in "${PHASES[@]}"; do
 
   phase_round=0
   phase_done=0
+  SKIP_BUILD_ROUND=0
   while [ "$phase_round" -lt "$MAX_PHASE_ROUNDS" ] && [ "$phase_done" -eq 0 ]; do
     phase_round=$((phase_round+1))
     echo ""
@@ -437,7 +438,11 @@ for PHASE in "${PHASES[@]}"; do
     echo "  ---- phase build round ${phase_round}/${MAX_PHASE_ROUNDS} ----"
 
     # IMPLEMENT this phase only (from approved plan).
-    if [ "$phase_round" -eq 1 ]; then
+    if [ "${SKIP_BUILD_ROUND:-0}" -eq 1 ]; then
+      # Critic returned API-ERROR last round; skip the builder, re-run gates only.
+      echo "  [pipeline] skipping builder this round (critic transport error, re-running gates)."
+      SKIP_BUILD_ROUND=0
+    elif [ "$phase_round" -eq 1 ]; then
       # Sub-chunk: extract deliverables from the plan and build one at a time.
       # Each focused omp call stays within OMP_TIMEOUT.
       # Cap at MAX_SUBCHUNKS per phase — if more, send as one focused call.
@@ -548,6 +553,15 @@ for PHASE in "${PHASES[@]}"; do
       echo "==> PHASE ${PHASE} PASSED + committed after ${phase_round} round(s)."
       phase_done=1
     else
+      # If the critic returned a transport error (not real findings), skip the
+      # builder fix round and re-run the critic on the same code. The builder
+      # must not burn a full round "fixing" findings that were never produced.
+      if grep -q "API-ERROR" "${FINDINGS_FILE:-}" 2>/dev/null; then
+        echo "  xx Gate 2 critic returned API-ERROR (transport, not findings). Re-running critic on same code."
+        log_int "PHASE" "GATE2" "${PHASE}" "API-ERROR verdict — retrying critic, skipping builder round"
+        SKIP_BUILD_ROUND=1
+        continue
+      fi
       echo "  xx Gate 2 (critic) rejected phase ${PHASE} (round ${phase_round})."
       if [ "$phase_round" -ge "$MAX_PHASE_ROUNDS" ]; then
         echo "  xx Phase ${PHASE} reached its fix-round cap."
