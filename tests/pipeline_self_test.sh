@@ -371,6 +371,38 @@ rm -rf "$WORK"
 note ""
 
 # =============================================================================
+# 11. Deletion guard: git diff --diff-filter=D detects deleted source files
+# =============================================================================
+note ""
+note "## 11. deletion guard: --diff-filter=D flags deleted source files"
+DG=$(mktemp -d)
+git init -q "$DG" 2>/dev/null
+cd "$DG"
+git config user.email "test@test" && git config user.name "test"
+mkdir -p src
+printf 'pub fn scan() {}\n' > src/scanner.rs
+printf 'pub fn sort() {}\n' > src/sort.rs
+printf 'println!(\"x\");\n' > src/main.rs
+printf '{"name":"x"}\n' > package.json
+git add -A && git commit -qm init
+rm src/scanner.rs
+git add -A
+# Count deleted source files (should catch scanner.rs, ignore non-src like package.json)
+DELETED=$(git diff --cached --diff-filter=D --name-only HEAD -- '*.rs' '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.go' 2>/dev/null | wc -l)
+[ "$DELETED" -eq 1 ] && ok "deletion guard: flags 1 deleted .rs file (scanner.rs)" || no "deletion guard: expected 1 deleted, got [$DELETED]: $(git diff --cached --diff-filter=D --name-only HEAD 2>/dev/null)"
+# Also verify it names the file
+DELETED_NAME=$(git diff --cached --diff-filter=D --name-only HEAD -- '*.rs' 2>/dev/null | head -1)
+[ "$DELETED_NAME" = "src/scanner.rs" ] && ok "deletion guard: names the deleted file (src/scanner.rs)" || no "deletion guard: wrong file name [$DELETED_NAME]"
+# Negative case: commit the deletion, then no deletions -> count 0 (must not trip)
+git commit -qm "remove scanner"
+rm -f src/main.rs; printf 'pub fn main() {}\n' > src/main.rs
+git add -A
+DELETED2=$(git diff --cached --diff-filter=D --name-only HEAD -- '*.rs' 2>/dev/null | wc -l)
+[ "$DELETED2" -eq 0 ] && ok "deletion guard: 0 deletions -> no trip" || no "deletion guard: false positive, got [$DELETED2]"
+cd "$DIR"
+rm -rf "$DG"
+
+# =============================================================================
 # summary
 # =============================================================================
 note ""
