@@ -1,7 +1,7 @@
 // Tests for the scan + selection hooks.
 
 import { describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 
 // Mock the IPC boundary so hook tests never touch Tauri.
 vi.mock('../../ipc', () => ({
