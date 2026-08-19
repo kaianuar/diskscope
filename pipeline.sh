@@ -518,6 +518,29 @@ for PHASE in "${PHASES[@]}"; do
       continue
     fi
 
+    # GATE 1.5: behavioral smoke test. Gate 1 runs the project's OWN tests
+    # (authored by the same builder — they can encode the bug as "correct").
+    # Gate 2 reads diffs (can't run the binary). The smoke gate builds the real
+    # binary and asserts the requirements' contract against a FIXED fixture:
+    # correct sizes vs du, no duplicate rows, --quiet preserves output, formats
+    # emit data. Deterministic, no LLM, ~seconds. Skips if not a CLI project.
+    if [ -f "$PROJ_ROOT/tests/smoke_gate.sh" ]; then
+      set +e
+      bash "$PROJ_ROOT/tests/smoke_gate.sh" 2>&1 | tee -a "${RUNLOG}"
+      S_EC=${PIPESTATUS[0]}
+      set -e
+      log_int "PHASE" "SMOKE" "${PHASE}" "smoke rc=${S_EC}"
+      if [ "$S_EC" -ne 0 ]; then
+        echo "  xx Gate 1.5 (behavioral smoke) failed for phase ${PHASE} (round ${phase_round})."
+        echo "  xx The binary behaves wrong vs the requirements contract (sizes/duplicates/quiet)."
+        if [ "$phase_round" -ge "$MAX_PHASE_ROUNDS" ]; then
+          echo "  xx Phase ${PHASE} reached its fix-round cap on smoke tests."
+          all_green=0
+        fi
+        continue
+      fi
+    fi
+
     # GATE 2: critic reviews ONLY this phase's diff (clean baseline = commit
     # after every passing phase, so uncommitted = this phase only).
     git add -A 2>/dev/null || true
