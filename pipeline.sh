@@ -40,7 +40,7 @@
 # =============================================================================
 set -uo pipefail
 
-BUILDER_MODEL="${BUILDER_MODEL:-commandcode/deepseek-v4-flash}"
+BUILDER_MODEL="${BUILDER_MODEL:-commandcode/moonshotai/Kimi-K2.7-Code}"
 MAX_PLAN_ROUNDS="${MAX_PLAN_ROUNDS:-5}"
 MAX_PHASE_ROUNDS="${MAX_PHASE_ROUNDS:-8}"
 FINDINGS_FILE="${FINDINGS_FILE:-/tmp/review_verdict.txt}"
