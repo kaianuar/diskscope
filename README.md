@@ -118,6 +118,41 @@ diskscope/
 └── plan.md               # Build plan (5 phases)
 ```
 
+## Cross-Platform Packaging (GUI)
+
+The GUI is a Tauri v2 app. To build installers for Linux/macOS/Windows:
+
+**1. Install Tauri Linux system deps (Ubuntu/Debian):**
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  libgtk-3-dev libatk1.0-dev libcairo2-dev
+```
+
+**2. Install the Tauri CLI:**
+```bash
+cargo install tauri-cli --version ^2 --locked
+```
+
+**3. Generate platform icons from the source image** (one-time; the source is `gui/icons/app-icon-source.png`):
+```bash
+cd gui
+cargo tauri icon icons/app-icon-source.png
+```
+
+**4. Build installers:**
+```bash
+cd gui
+npm install   # frontend deps (first time)
+cargo tauri build
+```
+Artifacts land in `gui/target/release/bundle/`:
+- Linux: `.deb`, `.AppImage`, `.rpm`
+- macOS: `.dmg` (build on a Mac)
+- Windows: `.msi`, `.exe` (build on Windows)
+
+**CI:** `.github/workflows/build-release.yml` builds all platforms on tag pushes (`v*`) and attaches artifacts to a draft GitHub Release. Both the GUI installers and a standalone CLI binary are produced.
+
 ## Development
 
 ```bash

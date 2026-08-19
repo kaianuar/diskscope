@@ -1,0 +1,121 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-gui:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Node toolchain
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: gui/web/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: gui/web
+        run: npm ci || npm install
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version ^2 --locked
+
+      - name: Build GUI bundle
+        working-directory: gui
+        run: cargo tauri build ${{ matrix.args }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: diskscope-${{ matrix.platform }}-${{ matrix.args || 'default' }}
+          path: |
+            gui/target/release/bundle/deb/*.deb
+            gui/target/release/bundle/appimage/*.AppImage
+            gui/target/release/bundle/rpm/*.rpm
+            gui/target/release/bundle/dmg/*.dmg
+            gui/target/release/bundle/msi/*.msi
+            gui/target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
+
+  build-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            ext: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build CLI release
+        run: cargo build --release -p diskscope-cli --target ${{ matrix.target }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: diskscope-cli-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/diskscope${{ matrix.ext }}
+          if-no-files-found: ignore
+
+  release:
+    needs: [build-gui, build-cli]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          draft: true
