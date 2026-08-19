@@ -148,8 +148,9 @@ Format: `type(scope): imperative description` — e.g. `feat(gui): add breadcrum
 - Push after each logical commit or small batch — don't accumulate a huge unpushed stack.
 
 **House rules:**
+- **`main` is the stable trunk.** Never commit directly to it. Always work on a feature branch: `feat/<description>` (new features), `fix/<description>` (bug fixes), `refactor/<description>`, `docs/<description>`, `chore/<description>` — branched off `main`.
+- Keep branches short-lived; merge back to `main` when the work is complete and verified (tests pass).
 - The repo uses `--no-verify` on commits by convention (pre-commit hooks are unreliable here)
-- Default branch: `feat/phase1-domain-core`
 - Verify with `tsc --noEmit` + `npm run build` + `npx vitest run` for frontend, `cargo test` for Rust, before finishing
 - Do NOT add omp-agent pipeline files (gate scripts, plan.md, requirements.md, ponytail.yaml) — they were intentionally removed
 - Do NOT commit `.env` files (gitignored; API keys live outside the repo)
