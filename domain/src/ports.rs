@@ -28,6 +28,13 @@ pub trait Scanner {
     /// not a directory; [`DomainError::PermissionDenied`] when the OS
     /// refuses access; [`DomainError::Io`] for any other I/O failure.
     fn scan(&self, path: &str) -> Result<ScanResult, DomainError>;
+
+    /// Return the last-modified time (Unix seconds) of the scan root
+    /// directory. Used as a cheap staleness probe before deciding
+    /// whether a full scan is needed.
+    ///
+    /// Returns the same error variants as [`Scanner::scan`].
+    fn stat_root(&self, path: &str) -> Result<u64, DomainError>;
 }
 
 // ── Trash ────────────────────────────────────────────────────────────────
@@ -68,6 +75,31 @@ pub trait Cache {
     /// Drop the cache entry for `path`. Returns [`DomainError::Io`] on
     /// backend failure; succeeds silently when the key is absent.
     fn invalidate(&self, path: &str) -> Result<(), DomainError>;
+
+    /// Look up `path` along with scan-root metadata `(mtime, total_bytes)`
+    /// used for incremental invalidation. Returns `None` on miss.
+    ///
+    /// The default implementation delegates to [`Cache::get`] and returns
+    /// zero metadata — suitable for caches that don't track staleness.
+    fn get_with_metadata(&self, path: &str) -> Option<(ScanResult, u64, u64)> {
+        self.get(path).map(|r| (r, 0, 0))
+    }
+
+    /// Persist `result` along with scan-root `mtime` and `total_bytes`
+    /// for `path`. Companion to [`Cache::get_with_metadata`].
+    ///
+    /// The default implementation delegates to [`Cache::put`], discarding
+    /// the metadata — suitable for caches that don't track staleness.
+    fn put_with_metadata(
+        &self,
+        path: &str,
+        result: &ScanResult,
+        mtime: u64,
+        total_bytes: u64,
+    ) -> Result<(), DomainError> {
+        let _ = (mtime, total_bytes);
+        self.put(path, result)
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -94,6 +126,10 @@ mod tests {
     impl Scanner for MockScanner {
         fn scan(&self, _path: &str) -> Result<ScanResult, DomainError> {
             Ok(self.result.clone())
+        }
+
+        fn stat_root(&self, _path: &str) -> Result<u64, DomainError> {
+            Ok(self.result.root.modified)
         }
     }
 
