@@ -29,6 +29,9 @@ coverage/
 playwright-report/
 test-results/
 
+# local working notes (never commit)
+UI_BACKLOG.md
+
 # screenshots that are QA artifacts (uncomment to exclude debug shots; keep if you
 # want them in the repo as documentation)
 # screenshots/
