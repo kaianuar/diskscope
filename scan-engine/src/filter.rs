@@ -35,17 +35,8 @@ fn prune_node(node: &FileNode, filter: &Filter, depth: usize) -> (FileNode, bool
     let depth_ok = filter.max_depth.map_or(true, |max| depth <= max);
     let passes = depth_ok && filter.matches(node);
 
-    if !passes {
-        let stub = FileNode {
-            path: node.path.clone(),
-            size: 0,
-            modified: node.modified,
-            file_type: FileType::Directory,
-            children: Vec::new(),
-        };
-        return (stub, true);
-    }
-
+    // Always recurse into children so that descendants matching the
+    // filter survive even when their ancestor directory does not.
     let mut new_children = Vec::with_capacity(node.children.len());
     for child in &node.children {
         let (child_pruned, child_pruned_flag) = prune_node(child, filter, depth + 1);
@@ -54,10 +45,44 @@ fn prune_node(node: &FileNode, filter: &Filter, depth: usize) -> (FileNode, bool
         }
     }
 
+    if !passes {
+        if new_children.is_empty() {
+            // No descendants survived — drop this node entirely.
+            let stub = FileNode {
+                path: node.path.clone(),
+                size: 0,
+                modified: node.modified,
+                file_type: FileType::Directory,
+                children: Vec::new(),
+            };
+            return (stub, true);
+        }
+        // Children survived even though this dir failed — keep it as a
+        // container with re-aggregated size.
+        let size = new_children.iter().map(|c| c.size).sum();
+        return (
+            FileNode {
+                path: node.path.clone(),
+                size,
+                modified: node.modified,
+                file_type: FileType::Directory,
+                children: new_children,
+            },
+            false,
+        );
+    }
+
+    // Node passes — re-aggregate size from surviving children.
+    let size = if new_children.is_empty() {
+        node.size
+    } else {
+        new_children.iter().map(|c| c.size).sum()
+    };
+
     (
         FileNode {
             path: node.path.clone(),
-            size: node.size,
+            size,
             modified: node.modified,
             file_type: node.file_type,
             children: new_children,
@@ -322,11 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn should_set_total_size_to_zero_when_root_fails_filter() {
-        // BUG: expected the root to either survive (keeping passing
-        // children) or be dropped entirely; actual behavior replaces the
-        // whole tree with a zero-size `Directory` stub, so `total_size`
-        // collapses to 0 and every descendant is lost.
+    fn should_return_empty_stub_when_root_and_all_descendants_fail_filter() {
         let result = ScanResult::from_tree(
             dir(
                 "/project",
@@ -341,26 +362,18 @@ mod tests {
 
         let filtered = apply_filter(&result, &Filter { min_size: Some(5000), ..base_filter() });
 
-        let stub = FileNode {
-            path: "/project".into(),
-            size: 0,
-            modified: 0,
-            file_type: FileType::Directory,
-            children: vec![],
-        };
-        assert_eq!(filtered.root, stub);
+        // Root fails and all children also fail → empty stub.
+        assert_eq!(filtered.root.size, 0);
+        assert!(filtered.root.children.is_empty());
     }
 
     #[test]
-    fn should_prune_entire_subtree_when_dir_fails_filter() {
+    fn should_keep_matching_children_when_dir_fails_filter() {
         // The root is typed `Audio` (not `Directory`) so it passes
         // `file_types=[Audio]` and we exercise an *inner* directory failing
-        // the filter.
-        // BUG: "/media/music" fails (a Directory is never Audio), so
-        // prune_node stubs it without walking its children; song.mp3 — which
-        // DOES match `file_types=[Audio]` — is lost with the subtree.
-        // Expected: walk the failing directory's children and keep the ones
-        // that pass.
+        // the filter.  "/media/music" fails (Directory is never Audio), but
+        // its child song.mp3 (Audio) survives — the dir is kept as a
+        // container.
         let root = FileNode {
             path: "/media".into(),
             size: 1000,
@@ -388,14 +401,14 @@ mod tests {
             },
         );
 
-        assert_eq!(paths(&filtered.root.children), vec!["/media/podcast.mp3"]);
+        // music dir kept as container with its Audio child; podcast kept.
+        let music = filtered.root.children.iter().find(|c| c.path == "/media/music").unwrap();
+        assert_eq!(paths(&music.children), vec!["/media/music/song.mp3"]);
+        assert!(filtered.root.children.iter().any(|c| c.path == "/media/podcast.mp3"));
     }
 
     #[test]
-    fn should_keep_dir_size_when_dir_passes_but_children_pruned() {
-        // BUG: the kept directory copies its pre-prune `size` (1000)
-        // unchanged, so `total_size` stays stale. Expected: `size`
-        // re-aggregated to 600 (the surviving child's size).
+    fn should_reaggregate_dir_size_when_children_pruned() {
         let result = ScanResult::from_tree(
             dir(
                 "/project",
@@ -410,7 +423,8 @@ mod tests {
 
         let filtered = apply_filter(&result, &Filter { min_size: Some(500), ..base_filter() });
 
-        assert_eq!(filtered.root.size, 1000);
+        // Only a.rs (600) survives; dir size re-aggregates to 600.
+        assert_eq!(filtered.root.size, 600);
     }
 
     #[test]
