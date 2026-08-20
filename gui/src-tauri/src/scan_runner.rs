@@ -50,8 +50,11 @@ pub enum ScanState {
     Done {
         /// Id of the finished scan.
         id: ScanId,
-        /// Snapshot of the completed scan result.
-        result: Arc<ScanResult>,
+        /// Snapshot of the completed scan result. `None` when the scan
+        /// failed (the error is in `error`).
+        result: Option<Arc<ScanResult>>,
+        /// Error message when the scan failed, `None` on success.
+        error: Option<String>,
     },
 }
 
@@ -67,15 +70,21 @@ impl ScanState {
 /// Serialised behind a `Mutex` because Tauri commands are invoked from
 /// multiple threads; command bodies are short (state transition + spawn),
 /// so a single lock never blocks the UI thread.
+/// A finished scan waiting for `collect()`: either the successful result
+/// or a failure message.
+type PendingScan = Result<Arc<ScanResult>, String>;
+
+/// Owns the scan state machine (`Idle → Running → Done/Cancelled → Idle`)
+/// and serialises access from multiple Tauri command threads.
 pub struct ScanRunner {
     state: Mutex<ScanState>,
     service: Arc<ScanService>,
     next_id: AtomicU64,
     /// Hand-off slot between the background scan thread and
     /// [`ScanRunner::collect`]: the thread stores the finished result
-    /// (or `None` on error — the error already went out via `scan-done`),
-    /// and `collect` reads it after joining.
-    pending: Arc<Mutex<Option<Arc<ScanResult>>>>,
+    /// (or the error string when the scan fails), and `collect` reads
+    /// it after joining.
+    pending: Arc<Mutex<Option<PendingScan>>>,
 }
 
 impl ScanRunner {
@@ -102,7 +111,10 @@ impl ScanRunner {
     /// Snapshot of the finished scan, if any.
     pub fn result(&self) -> Option<Arc<ScanResult>> {
         match &*self.state.lock() {
-            ScanState::Done { result, .. } => Some(Arc::clone(result)),
+            ScanState::Done {
+                result: Some(result),
+                ..
+            } => Some(Arc::clone(result)),
             _ => None,
         }
     }
@@ -163,13 +175,17 @@ impl ScanRunner {
             };
             let payload = match outcome {
                 Ok(result) => {
-                    *pending.lock() = Some(Arc::new(result.clone()));
+                    *pending.lock() = Some(Ok(Arc::new(result.clone())));
                     let dto = crate::dto::ScanResultDto::from(&result);
-                    serde_json::to_value(dto).unwrap_or_else(|_| {
-                        serde_json::json!({ "error": "failed to serialize scan result" })
-                    })
+                    serde_json::to_value(dto).unwrap_or_else(
+                        |_| serde_json::json!({ "error": "failed to serialize scan result" }),
+                    )
                 }
-                Err(e) => serde_json::json!({ "error": e.to_string() }),
+                Err(e) => {
+                    let msg = e.to_string();
+                    *pending.lock() = Some(Err(msg.clone()));
+                    serde_json::json!({ "error": msg })
+                }
             };
             let _ = app_for_thread.emit("scan-done", payload);
         });
@@ -213,13 +229,141 @@ impl ScanRunner {
         }
         if let ScanState::Running { id, handle } = std::mem::replace(&mut *guard, ScanState::Idle) {
             let _ = handle.join();
-            let result = self.pending.lock().take().unwrap_or_else(|| {
-                Arc::new(ScanResult::with_children(Vec::new(), 0))
-            });
-            *guard = ScanState::Done { id, result };
+            let pending = self.pending.lock().take();
+            let (result, error) = match pending {
+                Some(Ok(r)) => (Some(r), None),
+                Some(Err(e)) => (None, Some(e)),
+                None => (None, Some("scan produced no result".into())),
+            };
+            *guard = ScanState::Done { id, result, error };
             Some(id)
         } else {
             None
         }
+    }
+
+    /// Test helper: inject a pending result and advance to `Running`
+    /// with an immediately-finished thread so `collect()` can be
+    /// exercised without an `AppHandle`.
+    #[cfg(test)]
+    fn inject_pending(&self, pending: Result<Arc<ScanResult>, String>) {
+        let id = ScanId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        *self.pending.lock() = Some(pending);
+        let handle = thread::spawn(|| {});
+        // Ensure the thread is finished before returning, so `collect()`
+        // deterministically sees a completed handle (no scheduling race).
+        while !handle.is_finished() {
+            thread::yield_now();
+        }
+        *self.state.lock() = ScanState::Running { id, handle };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain::ports::{Cache, Scanner, Trash};
+    use domain::{DomainError, FileNode, FileType, ScanResult};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    // -- Minimal mocks --
+
+    struct FailScanner;
+
+    impl Scanner for FailScanner {
+        fn scan(&self, _path: &str) -> Result<ScanResult, DomainError> {
+            Err(DomainError::Io(std::io::Error::other(
+                "simulated scan failure",
+            )))
+        }
+        fn stat_root(&self, _path: &str) -> Result<u64, DomainError> {
+            Err(DomainError::Io(std::io::Error::other(
+                "simulated scan failure",
+            )))
+        }
+    }
+
+    struct NoopCache(Mutex<HashMap<String, ScanResult>>);
+
+    impl NoopCache {
+        fn new() -> Self {
+            Self(Mutex::new(HashMap::new()))
+        }
+    }
+
+    impl Cache for NoopCache {
+        fn get(&self, _: &str) -> Option<ScanResult> {
+            None
+        }
+        fn put(&self, _: &str, _: &ScanResult) -> Result<(), DomainError> {
+            Ok(())
+        }
+        fn invalidate(&self, _: &str) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    struct NoopTrash;
+
+    impl Trash for NoopTrash {
+        fn move_to_trash(&self, _: &str) -> Result<(), DomainError> {
+            Ok(())
+        }
+        fn undo_last(&self) -> Result<(), DomainError> {
+            Err(DomainError::InvalidPath("nothing to undo".into()))
+        }
+    }
+
+    fn make_runner() -> ScanRunner {
+        let service = Arc::new(ScanService::with_adapters(
+            Box::new(FailScanner),
+            Box::new(NoopCache::new()),
+            Box::new(NoopTrash),
+        ));
+        ScanRunner::new(service)
+    }
+
+    fn sample_result() -> ScanResult {
+        let root = FileNode {
+            path: "/test".into(),
+            size: 100,
+            modified: 0,
+            file_type: FileType::Directory,
+            children: vec![],
+        };
+        ScanResult::from_tree(root, 10)
+    }
+
+    #[test]
+    fn should_preserve_error_when_scan_fails() {
+        let runner = make_runner();
+        runner.inject_pending(Err("simulated scan failure".to_string()));
+
+        let id = runner.collect();
+        assert!(id.is_some(), "collect should return the scan id");
+        assert!(
+            runner.result().is_none(),
+            "result() must be None when scan failed"
+        );
+    }
+
+    #[test]
+    fn should_store_result_when_scan_succeeds() {
+        let runner = make_runner();
+        let result = sample_result();
+        runner.inject_pending(Ok(Arc::new(result.clone())));
+
+        let id = runner.collect();
+        assert!(id.is_some());
+        let got = runner.result().expect("result should be Some on success");
+        assert_eq!(*got, result);
+    }
+
+    #[test]
+    fn should_return_none_when_nothing_pending() {
+        let runner = make_runner();
+        // Don't inject anything — runner is Idle.
+        assert!(runner.result().is_none());
     }
 }
