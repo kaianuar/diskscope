@@ -11,5 +11,10 @@ description = "DiskScope domain layer: pure-Rust entities and ports, zero runtim
 name = "domain"
 path = "src/lib.rs"
 
+[features]
+# Sync-domain types (SyncEvent, SyncError, SyncTransport port).
+# Always safe to enable — no extra dependencies.
+sync = []
+
 [lints]
 workspace = true
