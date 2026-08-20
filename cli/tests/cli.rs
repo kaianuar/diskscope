@@ -242,3 +242,28 @@ fn should_exit_5_when_scan_path_does_not_exist() {
         .code(5)
         .stderr(predicate::str::contains("not found"));
 }
+
+// ── snapshot export ───────────────────────────────────────────────────────
+
+#[test]
+fn should_write_html_file_when_scan_export_runs_against_fixture_tree() {
+    let dir = fixture_tree();
+    let out_path = dir.path().join("snapshot.html");
+
+    let out = bin()
+        .args(["scan", dir.path().to_str().unwrap(), "--export", out_path.to_str().unwrap()])
+        .output()
+        .expect("run scan --export");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+    // stderr should confirm the write.
+    let stderr = String::from_utf8(out.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("Snapshot written to"), "stderr: {stderr}");
+
+    // The file must exist and start with <!DOCTYPE html>.
+    assert!(out_path.exists(), "snapshot file should exist");
+    let html = std::fs::read_to_string(&out_path).expect("read snapshot");
+    assert!(html.starts_with("<!DOCTYPE html>"), "should start with DOCTYPE");
+    assert!(html.contains("const TREE"), "should embed TREE JSON");
+    assert!(html.contains(&dir.path().to_str().unwrap()), "should contain scan root path");
+}
