@@ -211,3 +211,346 @@ fn walk_node<'a>(node: &'a FileNode, out: &mut Vec<&'a FileNode>) {
         walk_node(child, out);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Test helpers ────────────────────────────────────────────────────
+
+    /// Leaf node with the given path, size, and file type.
+    fn leaf(path: &str, size: u64, file_type: FileType) -> FileNode {
+        FileNode {
+            path: path.to_string(),
+            size,
+            modified: 0,
+            file_type,
+            children: Vec::new(),
+        }
+    }
+
+    /// Directory node with the given path and children.
+    fn dir(path: &str, children: Vec<FileNode>) -> FileNode {
+        FileNode {
+            path: path.to_string(),
+            size: children.iter().map(|c| c.total_size()).sum(),
+            modified: 0,
+            file_type: FileType::Directory,
+            children,
+        }
+    }
+
+    /// Synthetic root with no children (empty path reserved for roots).
+    fn empty_root() -> FileNode {
+        FileNode {
+            path: String::new(),
+            size: 0,
+            modified: 0,
+            file_type: FileType::Directory,
+            children: Vec::new(),
+        }
+    }
+
+    fn render_to_string(result: &ScanResult, fmt: OutputFormat) -> String {
+        let mut out = Vec::new();
+        render(result, fmt, &mut out).expect("render should succeed");
+        String::from_utf8(out).expect("render output should be UTF-8")
+    }
+
+    // ── Table ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn should_write_header_when_result_is_empty() {
+        let result = ScanResult::from_tree(empty_root(), 0);
+
+        let output = render_to_string(&result, OutputFormat::Table);
+
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2, "header plus root row");
+        assert_eq!(lines[0], "        SIZE                MTIME  TYPE        PATH");
+        // Root has an empty path; the row still shows its type.
+        assert!(lines[1].contains("Directory"), "root row: {}", lines[1]);
+    }
+
+    #[test]
+    fn should_align_columns_when_rows_have_varying_widths() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![
+                    leaf("tiny.bin", 42, FileType::Other),
+                    leaf("medium.bin", 1_572_864, FileType::Audio),
+                    leaf("very-long-name.bin", 10_485_760, FileType::Document),
+                ],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Table);
+
+        // Column separator: two spaces before SIZE, MTIME, TYPE, PATH.
+        // PATH is the last column and the measured widths are identical
+        // across rows, so every row's PATH must start at the same byte
+        // offset. The header uses fixed 12/19/10 widths, so it is skipped.
+        // `rfind("  ")` locates the separator before PATH: paths in this
+        // test contain no double spaces, and the root's empty path simply
+        // ends the row right after that separator.
+        let rows: Vec<&str> = output.lines().skip(1).collect();
+        assert!(rows.len() >= 4, "expected root + 3 data rows: {output}");
+        let path_starts: Vec<usize> = rows
+            .iter()
+            .map(|line| line.rfind("  ").map(|i| i + 2).unwrap_or(0))
+            .collect();
+        assert!(
+            path_starts.windows(2).all(|w| w[0] == w[1]),
+            "PATH column starts at inconsistent offsets: {path_starts:?}"
+        );
+    }
+
+    #[test]
+    fn should_show_human_readable_sizes_when_bytes_are_large() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![
+                    leaf("empty.bin", 0, FileType::Other),
+                    leaf("kib.bin", 1024, FileType::Other),
+                    leaf("mib.bin", 1_572_864, FileType::Other),
+                ],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Table);
+
+        assert!(output.contains("0 B"), "got: {output}");
+        assert!(output.contains("1.0 KiB"), "got: {output}");
+        assert!(output.contains("1.5 MiB"), "got: {output}");
+    }
+
+    // ── JSON ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn should_produce_valid_json_when_result_has_children() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![leaf("file.txt", 10, FileType::Document)],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Json);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&output).expect("output should be valid JSON");
+        assert!(parsed.is_object(), "expected a JSON object, got: {parsed}");
+    }
+
+    #[test]
+    fn should_include_all_fields_when_serializing_a_node() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![leaf("song.mp3", 2048, FileType::Audio)],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Json);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&output).expect("output should be valid JSON");
+        let root = parsed
+            .as_object()
+            .expect("root should be an object");
+        assert_eq!(root["path"], "");
+        assert_eq!(root["size"], 2048);
+        assert_eq!(root["modified"], 0);
+        assert_eq!(root["file_type"], "dir");
+        let children = root["children"]
+            .as_array()
+            .expect("children should be an array");
+        assert_eq!(children.len(), 1);
+        let child = &children[0];
+        assert_eq!(child["path"], "song.mp3");
+        assert_eq!(child["size"], 2048);
+        assert_eq!(child["modified"], 0);
+        assert_eq!(child["file_type"], "audio");
+        assert!(child["children"].as_array().unwrap().is_empty());
+    }
+
+    // ── JSONL ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn should_write_one_line_per_node_when_tree_is_nested() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![
+                    dir(
+                        "sub",
+                        vec![leaf("deep.txt", 5, FileType::Document)],
+                    ),
+                    leaf("top.bin", 7, FileType::Other),
+                ],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Jsonl);
+
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 4, "root + sub + deep + top: {output}");
+    }
+
+    #[test]
+    fn should_emit_valid_json_on_each_line_when_serializing() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![dir(
+                    "sub",
+                    vec![leaf("deep.txt", 5, FileType::Document)],
+                )],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Jsonl);
+
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3, "root + sub + deep: {output}");
+        let parsed: Vec<serde_json::Value> = lines
+            .iter()
+            .map(|l| serde_json::from_str(l).expect("each line should be valid JSON"))
+            .collect();
+        assert_eq!(parsed[0]["path"], "");
+        assert_eq!(parsed[1]["path"], "sub");
+        assert_eq!(parsed[2]["path"], "deep.txt");
+    }
+
+    // ── Tree ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn should_use_branch_glyphs_when_rendering_nested_nodes() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![
+                    dir("docs", vec![leaf("readme.md", 3, FileType::Document)]),
+                    leaf("top.txt", 9, FileType::Other),
+                ],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Tree);
+
+        // BUG: `write_tree_node` is supposed to render tree-style output
+        // with branch glyphs (`├──` / `└──`) and indentation, per the
+        // module docs. `render_tree` calls it with an empty root prefix,
+        // and the `prefix.is_empty()` branch of `child_prefix` keeps every
+        // descendant's prefix empty, so `branch` is always `""` and the
+        // output is flat: one bare line per node, no glyphs, no indent.
+        // This test asserts the CURRENT (buggy) behavior; once the renderer
+        // is fixed, it should assert `├── docs` / `└── top.txt` instead.
+        for name in ["docs", "readme.md", "top.txt"] {
+            let line = output
+                .lines()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("tree output missing {name}: {output}"));
+            assert!(
+                !line.contains("├── ") && !line.contains("└── "),
+                "expected no branch glyphs (flat output), got: {line}"
+            );
+            assert!(
+                line.starts_with(name),
+                "expected line to start with the node path, got: {line}"
+            );
+        }
+        assert!(output.contains("docs [3 B, dir]"), "got: {output}");
+        assert!(output.contains("readme.md [3 B, document]"), "got: {output}");
+        assert!(output.contains("top.txt [9 B, other]"), "got: {output}");
+    }
+
+    #[test]
+    fn should_indent_children_when_rendering_nested_tree() {
+        let result = ScanResult::from_tree(
+            dir(
+                "",
+                vec![dir("docs", vec![leaf("readme.md", 3, FileType::Document)])],
+            ),
+            0,
+        );
+
+        let output = render_to_string(&result, OutputFormat::Tree);
+
+        // BUG: nested children are supposed to be indented under their
+        // parent (module docs promise "tree-style indented output"). The
+        // broken prefix propagation in `write_tree_node` (see the glyph
+        // test above) also flattens indentation: every line starts at
+        // column 0 with no leading whitespace. This asserts the CURRENT
+        // (buggy) behavior; the intended output is:
+        //
+        //     [3 B, dir]
+        //     └── docs [3 B, dir]
+        //         └── readme.md [3 B, document]
+        //
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3, "root + docs + readme.md: {output}");
+        // The root line starts with a space because the synthetic root has
+        // an empty path; the descendants must start at column 0.
+        for line in &lines[1..] {
+            assert!(
+                line.starts_with(line.trim_start()) && !line.starts_with(' '),
+                "expected no leading indentation (flat output), got: {line}"
+            );
+        }
+        assert_eq!(lines[1], "docs [3 B, dir]");
+        assert_eq!(lines[2], "readme.md [3 B, document]");
+    }
+
+    // ── Cross-format ────────────────────────────────────────────────────
+
+    #[test]
+    fn should_write_nothing_beyond_root_when_result_is_empty() {
+        let result = ScanResult::from_tree(empty_root(), 0);
+
+        let table = render_to_string(&result, OutputFormat::Table);
+        let jsonl = render_to_string(&result, OutputFormat::Jsonl);
+        let tree = render_to_string(&result, OutputFormat::Tree);
+
+        // Table: header plus the root row only — no extra data rows.
+        assert_eq!(table.lines().count(), 2, "table: {table}");
+        // JSONL: exactly one line — the root itself.
+        assert_eq!(jsonl.lines().count(), 1, "jsonl: {jsonl}");
+        // Tree: exactly one line — the root itself.
+        assert_eq!(tree.lines().count(), 1, "tree: {tree}");
+    }
+
+    #[test]
+    fn should_always_include_root_when_rendering_any_format() {
+        let result = ScanResult::from_tree(empty_root(), 0);
+
+        let table = render_to_string(&result, OutputFormat::Table);
+        let json = render_to_string(&result, OutputFormat::Json);
+        let jsonl = render_to_string(&result, OutputFormat::Jsonl);
+        let tree = render_to_string(&result, OutputFormat::Tree);
+
+        // Table: root row present (empty path row after the header).
+        assert!(table.lines().nth(1).is_some(), "table: {table}");
+        // JSON: root object present even with no children.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("JSON should be valid");
+        assert!(parsed["children"].is_array(), "json: {json}");
+        assert!(parsed["children"].as_array().unwrap().is_empty());
+        // JSONL: first (only) line is the root node as a JSON object.
+        let root_line = jsonl.lines().next().expect("jsonl should have a root line");
+        let root_json: serde_json::Value =
+            serde_json::from_str(root_line).expect("root line should be valid JSON");
+        assert_eq!(root_json["path"], "");
+        // Tree: root line present even with no children.
+        assert!(!tree.is_empty(), "tree: {tree}");
+    }
+}
