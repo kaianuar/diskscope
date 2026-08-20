@@ -11,9 +11,9 @@
 
 use std::sync::Arc;
 
+use domain::DomainError;
 use parking_lot::Mutex;
 use trash::TrashItem;
-use domain::DomainError;
 
 /// One entry on the undo stack: the absolute path the user trashed,
 /// plus the platform's `TrashItem` (used to restore it).
@@ -78,10 +78,7 @@ impl domain::ports::Trash for TrashBin {
                 }
             }) {
                 let mut stack = self.undo_stack.lock();
-                stack.push(UndoEntry {
-                    original_path: path.to_string(),
-                    trash_item,
-                });
+                stack.push(UndoEntry { original_path: path.to_string(), trash_item });
             }
         }
         Ok(())
@@ -126,14 +123,10 @@ fn restore_items(items: Vec<trash::TrashItem>) -> Result<(), DomainError> {
 
 #[cfg(target_os = "macos")]
 fn list_trash() -> Result<Vec<trash::TrashItem>, DomainError> {
-    Err(DomainError::Unsupported(
-        "trash listing is not available on macOS".into(),
-    ))
+    Err(DomainError::Unsupported("trash listing is not available on macOS".into()))
 }
 
 #[cfg(target_os = "macos")]
 fn restore_items(_items: Vec<trash::TrashItem>) -> Result<(), DomainError> {
-    Err(DomainError::Unsupported(
-        "trash restore-by-item is not available on macOS".into(),
-    ))
+    Err(DomainError::Unsupported("trash restore-by-item is not available on macOS".into()))
 }

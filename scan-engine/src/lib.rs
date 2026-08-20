@@ -101,11 +101,7 @@ impl ScanService {
         cache: Box<dyn Cache + Send + Sync>,
         trash: Box<dyn Trash + Send + Sync>,
     ) -> Self {
-        Self {
-            scanner,
-            cache,
-            trash,
-        }
+        Self { scanner, cache, trash }
     }
 
     /// Borrow the scanner.
@@ -149,8 +145,7 @@ impl ScanService {
         let root_bytes = result.root.size;
 
         // 4. Persist for next time.
-        self.cache
-            .put_with_metadata(path, &result, root_mtime, root_bytes)?;
+        self.cache.put_with_metadata(path, &result, root_mtime, root_bytes)?;
         Ok(result)
     }
 

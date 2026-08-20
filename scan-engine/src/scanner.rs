@@ -65,17 +65,12 @@ impl domain::ports::Scanner for JwalkScanner {
 
     fn stat_root(&self, path: &str) -> Result<u64, DomainError> {
         let root = validate_root(path)?;
-        let mtime = root
-            .metadata()
-            .map_err(DomainError::Io)?
-            .modified()
-            .map_err(DomainError::Io)?;
+        let mtime =
+            root.metadata().map_err(DomainError::Io)?.modified().map_err(DomainError::Io)?;
         mtime
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
-            .map_err(|e| DomainError::Io(io::Error::other(format!(
-                "mtime before unix epoch: {e}"
-            ))))
+            .map_err(|e| DomainError::Io(io::Error::other(format!("mtime before unix epoch: {e}"))))
     }
 }
 
@@ -132,10 +127,7 @@ struct WalkEntry {
 impl WalkEntry {
     fn from_jwalk(e: JwalkDirEntry, root: &Path) -> Self {
         let path = e.path();
-        let rel = path
-            .strip_prefix(root)
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+        let rel = path.strip_prefix(root).map(Path::to_path_buf).unwrap_or_default();
         let (size, modified) = match e.metadata() {
             Ok(m) => (m.len(), mtime_to_secs(m.modified())),
             Err(_) => (0, 0),
@@ -144,20 +136,10 @@ impl WalkEntry {
         let file_type = if is_dir {
             FileType::Directory
         } else {
-            let ext = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             FileType::from_extension(ext)
         };
-        Self {
-            path,
-            rel,
-            size,
-            modified,
-            is_dir,
-            file_type,
-        }
+        Self { path, rel, size, modified, is_dir, file_type }
     }
 }
 
@@ -196,19 +178,13 @@ fn build_tree(root: &Path, entries: &[WalkEntry]) -> FileNode {
 
     let mut by_parent: BTreeMap<PathBuf, Vec<WalkEntry>> = BTreeMap::new();
     for entry in entries {
-        let parent = entry
-            .rel
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+        let parent = entry.rel.parent().map(Path::to_path_buf).unwrap_or_default();
         by_parent.entry(parent).or_default().push(entry.clone());
     }
 
     let root_entry = entries.iter().find(|e| e.rel.as_os_str().is_empty()).cloned();
-    let (root_size, root_modified) = root_entry
-        .as_ref()
-        .map(|e| (e.size, e.modified))
-        .unwrap_or((0, 0));
+    let (root_size, root_modified) =
+        root_entry.as_ref().map(|e| (e.size, e.modified)).unwrap_or((0, 0));
 
     let mut node = FileNode {
         path: root.to_string_lossy().into_owned(),
@@ -235,11 +211,8 @@ fn build_children(
                 continue; // root is not its own child
             }
             let child_rel = e.rel.clone();
-            let children_out = if e.is_dir {
-                build_children(by_parent, child_rel)
-            } else {
-                Vec::new()
-            };
+            let children_out =
+                if e.is_dir { build_children(by_parent, child_rel) } else { Vec::new() };
             children.push(FileNode {
                 path: e.path.to_string_lossy().into_owned(),
                 size: e.size,

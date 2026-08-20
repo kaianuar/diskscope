@@ -49,27 +49,17 @@ mod tests {
     }
 
     fn size_spec(direction: SortDirection) -> SortSpec {
-        SortSpec {
-            column: SortColumn::Size,
-            direction,
-        }
+        SortSpec { column: SortColumn::Size, direction }
     }
 
     fn name_spec(direction: SortDirection) -> SortSpec {
-        SortSpec {
-            column: SortColumn::Name,
-            direction,
-        }
+        SortSpec { column: SortColumn::Name, direction }
     }
 
     #[test]
     fn should_sort_by_size_descending_when_spec_says_desc() {
         // Arrange
-        let mut entries = vec![
-            leaf("small", 10),
-            leaf("large", 300),
-            leaf("medium", 100),
-        ];
+        let mut entries = vec![leaf("small", 10), leaf("large", 300), leaf("medium", 100)];
 
         // Act
         apply_sort(&mut entries, size_spec(SortDirection::Descending));
@@ -82,11 +72,7 @@ mod tests {
     #[test]
     fn should_sort_by_size_ascending_when_spec_says_asc() {
         // Arrange
-        let mut entries = vec![
-            leaf("large", 300),
-            leaf("small", 10),
-            leaf("medium", 100),
-        ];
+        let mut entries = vec![leaf("large", 300), leaf("small", 10), leaf("medium", 100)];
 
         // Act
         apply_sort(&mut entries, size_spec(SortDirection::Ascending));
@@ -99,11 +85,7 @@ mod tests {
     #[test]
     fn should_sort_by_name_ascending_when_spec_says_name_asc() {
         // Arrange
-        let mut entries = vec![
-            leaf("zeta", 1),
-            leaf("alpha", 1),
-            leaf("mid", 1),
-        ];
+        let mut entries = vec![leaf("zeta", 1), leaf("alpha", 1), leaf("mid", 1)];
 
         // Act
         apply_sort(&mut entries, name_spec(SortDirection::Ascending));
@@ -116,11 +98,7 @@ mod tests {
     #[test]
     fn should_sort_by_name_descending_when_spec_says_name_desc() {
         // Arrange
-        let mut entries = vec![
-            leaf("alpha", 1),
-            leaf("mid", 1),
-            leaf("zeta", 1),
-        ];
+        let mut entries = vec![leaf("alpha", 1), leaf("mid", 1), leaf("zeta", 1)];
 
         // Act
         apply_sort(&mut entries, name_spec(SortDirection::Descending));
@@ -133,11 +111,14 @@ mod tests {
     #[test]
     fn should_sort_recursively_when_nested_tree() {
         // Arrange
-        let mut root = dir("root", vec![
-            dir("b_dir", vec![leaf("b2", 20), leaf("b1", 10)]),
-            leaf("a_file", 5),
-            dir("c_dir", vec![leaf("c2", 2), leaf("c1", 1)]),
-        ]);
+        let mut root = dir(
+            "root",
+            vec![
+                dir("b_dir", vec![leaf("b2", 20), leaf("b1", 10)]),
+                leaf("a_file", 5),
+                dir("c_dir", vec![leaf("c2", 2), leaf("c1", 1)]),
+            ],
+        );
 
         // Act
         apply_sort(&mut root.children, size_spec(SortDirection::Descending));
@@ -145,28 +126,16 @@ mod tests {
         // Assert
         let top_names: Vec<&str> = root.children.iter().map(|c| c.path.as_str()).collect();
         assert_eq!(top_names, vec!["b_dir", "a_file", "c_dir"]);
-        let b_sizes: Vec<u64> = root.children[0]
-            .children
-            .iter()
-            .map(|c| c.size)
-            .collect();
+        let b_sizes: Vec<u64> = root.children[0].children.iter().map(|c| c.size).collect();
         assert_eq!(b_sizes, vec![20, 10]);
-        let c_sizes: Vec<u64> = root.children[2]
-            .children
-            .iter()
-            .map(|c| c.size)
-            .collect();
+        let c_sizes: Vec<u64> = root.children[2].children.iter().map(|c| c.size).collect();
         assert_eq!(c_sizes, vec![2, 1]);
     }
 
     #[test]
     fn should_stabilize_equal_elements_when_same_size() {
         // Arrange
-        let mut entries = vec![
-            leaf("third", 100),
-            leaf("first", 100),
-            leaf("second", 100),
-        ];
+        let mut entries = vec![leaf("third", 100), leaf("first", 100), leaf("second", 100)];
 
         // Act
         apply_sort(&mut entries, size_spec(SortDirection::Descending));
@@ -204,11 +173,7 @@ mod tests {
     #[test]
     fn should_preserve_root_when_apply_sort_result_called() {
         // Arrange
-        let root = dir("root", vec![
-            leaf("b", 2),
-            leaf("a", 1),
-            leaf("c", 3),
-        ]);
+        let root = dir("root", vec![leaf("b", 2), leaf("a", 1), leaf("c", 3)]);
         let result = ScanResult::from_tree(root, 7);
 
         // Act

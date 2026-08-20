@@ -78,10 +78,7 @@ fn should_emit_one_json_line_per_file_when_scan_format_jsonl_runs() {
             .unwrap_or_else(|e| panic!("line is not valid JSON: {line}: {e}"));
         assert!(v.get("path").is_some(), "line missing path: {line}");
     }
-    assert!(
-        lines.iter().any(|l| l.contains("b.bin")),
-        "expected b.bin among the lines"
-    );
+    assert!(lines.iter().any(|l| l.contains("b.bin")), "expected b.bin among the lines");
 }
 
 #[test]
@@ -112,10 +109,7 @@ fn should_print_nothing_on_stdout_and_exit_0_when_quiet_passed() {
         .output()
         .expect("run scan --quiet");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert!(
-        !out.stdout.is_empty(),
-        "expected rendered output on stdout even with --quiet"
-    );
+    assert!(!out.stdout.is_empty(), "expected rendered output on stdout even with --quiet");
     assert!(
         out.stderr.is_empty(),
         "expected no summary on stderr with --quiet, got: {}",
@@ -146,10 +140,8 @@ fn cleanup_trash_under(root: &Path) -> usize {
         Ok(v) => v,
         Err(_) => return 0,
     };
-    let ours: Vec<_> = items
-        .into_iter()
-        .filter(|it| it.original_path().starts_with(root))
-        .collect();
+    let ours: Vec<_> =
+        items.into_iter().filter(|it| it.original_path().starts_with(root)).collect();
     let count = ours.len();
     if count > 0 {
         let _ = trash::os_limited::restore_all(ours);
@@ -181,9 +173,7 @@ fn should_move_file_to_trash_when_delete_invoked_against_a_real_file() {
     #[cfg(not(target_os = "macos"))]
     {
         let items = trash::os_limited::list().expect("list trash");
-        let in_trash = items
-            .iter()
-            .any(|it| it.original_path() == target);
+        let in_trash = items.iter().any(|it| it.original_path() == target);
         assert!(in_trash, "file should be present in trash");
     }
 
@@ -235,15 +225,11 @@ fn should_emit_bash_script_when_completions_bash_invoked() {
 #[test]
 fn should_print_total_and_count_and_top10_when_summary_invoked() {
     let dir = fixture_tree();
-    bin()
-        .args(["summary", dir.path().to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("total:")
-                .and(predicate::str::contains("top 10:"))
-                .and(predicate::str::contains("b.bin")),
-        );
+    bin().args(["summary", dir.path().to_str().unwrap()]).assert().success().stdout(
+        predicate::str::contains("total:")
+            .and(predicate::str::contains("top 10:"))
+            .and(predicate::str::contains("b.bin")),
+    );
 }
 
 // ── exit codes ────────────────────────────────────────────────────────────

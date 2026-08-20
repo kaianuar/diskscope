@@ -52,11 +52,7 @@ pub struct PathError {
 impl PathError {
     /// Build a `PathError` from an [`io::Error`] and the path that caused it.
     pub fn from_io(path: impl Into<String>, err: &io::Error) -> Self {
-        Self {
-            path: path.into(),
-            kind: err.kind(),
-            message: err.to_string(),
-        }
+        Self { path: path.into(), kind: err.kind(), message: err.to_string() }
     }
 }
 
@@ -67,7 +63,6 @@ impl fmt::Display for PathError {
 }
 
 impl std::error::Error for PathError {}
-
 
 // ── FileType ──────────────────────────────────────────────────────────────
 
@@ -221,13 +216,7 @@ impl FileNode {
         if path.is_empty() {
             return Err(DomainError::InvalidPath("path must not be empty".into()));
         }
-        Ok(Self {
-            path,
-            size,
-            modified,
-            file_type,
-            children: Vec::new(),
-        })
+        Ok(Self { path, size, modified, file_type, children: Vec::new() })
     }
 
     /// Build a `FileNode` directly from a `Path`, using its file name as
@@ -260,11 +249,7 @@ impl FileNode {
         if self.children.is_empty() {
             return 1;
         }
-        1 + self
-            .children
-            .iter()
-            .map(Self::file_count)
-            .sum::<u64>()
+        1 + self.children.iter().map(Self::file_count).sum::<u64>()
     }
 }
 
@@ -296,13 +281,7 @@ impl ScanResult {
     pub fn from_tree(root: FileNode, scan_duration_ms: u64) -> Self {
         let total_size = root.total_size();
         let file_count = root.file_count();
-        Self {
-            root,
-            total_size,
-            file_count,
-            scan_duration_ms,
-            skipped: Vec::new(),
-        }
+        Self { root, total_size, file_count, scan_duration_ms, skipped: Vec::new() }
     }
 
     /// Build a `ScanResult` from a flat list of children. The resulting
@@ -320,13 +299,7 @@ impl ScanResult {
         };
         let total_size = root.total_size();
         let file_count = root.file_count();
-        Self {
-            root,
-            total_size,
-            file_count,
-            scan_duration_ms,
-            skipped: Vec::new(),
-        }
+        Self { root, total_size, file_count, scan_duration_ms, skipped: Vec::new() }
     }
 
     /// Number of skipped paths (`self.skipped.len()`).
@@ -381,9 +354,7 @@ impl Filter {
         }
         if let Some(ref pat) = self.name_pattern {
             if pat.is_empty() {
-                return Err(DomainError::InvalidFilter(
-                    "name_pattern must not be empty".into(),
-                ));
+                return Err(DomainError::InvalidFilter("name_pattern must not be empty".into()));
             }
         }
         Ok(())
@@ -475,19 +446,35 @@ impl SortSpec {
         match self.column {
             SortColumn::Name => nodes.sort_by(|a, b| {
                 let ord = a.path.cmp(&b.path);
-                if ascending { ord } else { ord.reverse() }
+                if ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
             }),
             SortColumn::Size => nodes.sort_by(|a, b| {
                 let ord = a.size.cmp(&b.size);
-                if ascending { ord } else { ord.reverse() }
+                if ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
             }),
             SortColumn::Modified => nodes.sort_by(|a, b| {
                 let ord = a.modified.cmp(&b.modified);
-                if ascending { ord } else { ord.reverse() }
+                if ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
             }),
             SortColumn::Type => nodes.sort_by(|a, b| {
                 let ord = format!("{:?}", a.file_type).cmp(&format!("{:?}", b.file_type));
-                if ascending { ord } else { ord.reverse() }
+                if ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
             }),
         }
     }
@@ -634,8 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn should_aggregate_parent_size_from_children_when_scanresult_with_children_built_from_child_nodes()
-    {
+    fn should_aggregate_parent_size_from_children_when_scanresult_with_children_built_from_child_nodes(
+    ) {
         let children = vec![
             FileNode {
                 path: "a".into(),
@@ -675,13 +662,7 @@ mod tests {
     // ── Filter::matches ────────────────────────────────────────────────
 
     fn leaf(size: u64, modified: u64, ft: FileType, path: &str) -> FileNode {
-        FileNode {
-            path: path.into(),
-            size,
-            modified,
-            file_type: ft,
-            children: vec![],
-        }
+        FileNode { path: path.into(), size, modified, file_type: ft, children: vec![] }
     }
 
     #[test]
@@ -693,42 +674,28 @@ mod tests {
 
     #[test]
     fn should_drop_entry_when_filter_matches_rejects_by_min_size() {
-        let filter = Filter {
-            min_size: Some(1000),
-            ..Filter::default()
-        };
+        let filter = Filter { min_size: Some(1000), ..Filter::default() };
         let node = leaf(500, 0, FileType::Other, "/x");
         assert!(!filter.matches(&node));
     }
 
     #[test]
     fn should_drop_entry_when_filter_matches_rejects_by_max_age() {
-        let filter = Filter {
-            max_age: Some(100),
-            now: 1000,
-            ..Filter::default()
-        };
+        let filter = Filter { max_age: Some(100), now: 1000, ..Filter::default() };
         let node = leaf(0, 500, FileType::Other, "/x");
         assert!(!filter.matches(&node));
     }
 
     #[test]
     fn should_keep_entry_when_filter_matches_accepts_by_max_age() {
-        let filter = Filter {
-            max_age: Some(100),
-            now: 1000,
-            ..Filter::default()
-        };
+        let filter = Filter { max_age: Some(100), now: 1000, ..Filter::default() };
         let node = leaf(0, 950, FileType::Other, "/x");
         assert!(filter.matches(&node));
     }
 
     #[test]
     fn should_drop_entry_when_filter_matches_rejects_by_name_pattern() {
-        let filter = Filter {
-            name_pattern: Some("target".into()),
-            ..Filter::default()
-        };
+        let filter = Filter { name_pattern: Some("target".into()), ..Filter::default() };
         let node = leaf(0, 0, FileType::Other, "/project/src");
         assert!(!filter.matches(&node));
     }
@@ -756,10 +723,7 @@ mod tests {
     #[test]
     fn should_sort_ascending_when_sortspec_apply_called_with_ascending() {
         let mut nodes = three_unsorted();
-        let spec = SortSpec {
-            column: SortColumn::Size,
-            direction: SortDirection::Ascending,
-        };
+        let spec = SortSpec { column: SortColumn::Size, direction: SortDirection::Ascending };
         spec.apply(&mut nodes);
         assert_eq!(nodes[0].path, "small.txt");
         assert_eq!(nodes[1].path, "mid.txt");
@@ -769,10 +733,7 @@ mod tests {
     #[test]
     fn should_sort_descending_when_sortspec_apply_called_with_descending() {
         let mut nodes = three_unsorted();
-        let spec = SortSpec {
-            column: SortColumn::Size,
-            direction: SortDirection::Descending,
-        };
+        let spec = SortSpec { column: SortColumn::Size, direction: SortDirection::Descending };
         spec.apply(&mut nodes);
         assert_eq!(nodes[0].path, "large.txt");
         assert_eq!(nodes[1].path, "mid.txt");

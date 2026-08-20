@@ -104,7 +104,12 @@ fn run_summary(cmd: cli::SummaryArgs) -> anyhow::Result<()> {
 fn print_summary(result: &ScanResult) -> anyhow::Result<()> {
     let out = io::stdout();
     let mut lock = out.lock();
-    writeln!(lock, "total: {} ({} entries)", domain::format_size(result.total_size), result.file_count)?;
+    writeln!(
+        lock,
+        "total: {} ({} entries)",
+        domain::format_size(result.total_size),
+        result.file_count
+    )?;
     writeln!(lock, "top 10:")?;
 
     // Recursively collect every node (root included), sort by size
@@ -112,11 +117,7 @@ fn print_summary(result: &ScanResult) -> anyhow::Result<()> {
     let mut nodes: Vec<&FileNode> = Vec::new();
     collect_nodes(&result.root, &mut nodes);
     let mut sorted: Vec<FileNode> = nodes.into_iter().cloned().collect();
-    SortSpec {
-        column: SortColumn::Size,
-        direction: SortDirection::Descending,
-    }
-    .apply(&mut sorted);
+    SortSpec { column: SortColumn::Size, direction: SortDirection::Descending }.apply(&mut sorted);
     for node in sorted.iter().take(10) {
         writeln!(lock, "  {:>10}  {}", domain::format_size(node.size), node.path)?;
     }
@@ -195,10 +196,7 @@ mod tests {
         let err = Cli::try_parse_from(["diskscope", "scan", "/tmp", "--format", "xml"])
             .err()
             .expect("parse must fail");
-        assert!(
-            err.to_string().contains("invalid value"),
-            "unexpected error: {err}"
-        );
+        assert!(err.to_string().contains("invalid value"), "unexpected error: {err}");
     }
 
     #[test]

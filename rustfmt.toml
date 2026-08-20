@@ -1,0 +1,5 @@
+# Explicit formatting settings so `cargo fmt --check` is deterministic
+# across rustfmt versions (stable toolchain drift on CI vs local).
+edition = "2021"
+max_width = 100
+use_small_heuristics = "Max"

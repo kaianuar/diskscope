@@ -157,9 +157,7 @@ mod tests {
 
     impl MockTrash {
         fn new() -> Self {
-            Self {
-                recorded: RefCell::new(Vec::new()),
-            }
+            Self { recorded: RefCell::new(Vec::new()) }
         }
     }
 
@@ -209,9 +207,7 @@ mod tests {
 
     impl MockCache {
         fn new() -> Self {
-            Self {
-                entries: RefCell::new(HashMap::new()),
-            }
+            Self { entries: RefCell::new(HashMap::new()) }
         }
     }
 
@@ -221,9 +217,7 @@ mod tests {
         }
 
         fn put(&self, path: &str, result: &ScanResult) -> Result<(), DomainError> {
-            self.entries
-                .borrow_mut()
-                .insert(path.into(), result.clone());
+            self.entries.borrow_mut().insert(path.into(), result.clone());
             Ok(())
         }
 

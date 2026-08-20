@@ -50,12 +50,7 @@ pub struct WireEvent {
 /// Convert a `SyncEvent` to its wire form.
 pub fn to_wire(event: &SyncEvent) -> WireEvent {
     match event {
-        SyncEvent::Write {
-            path,
-            size,
-            mtime,
-            file_type,
-        } => WireEvent {
+        SyncEvent::Write { path, size, mtime, file_type } => WireEvent {
             kind: "write".into(),
             path: path.clone(),
             size: *size,
@@ -89,10 +84,7 @@ pub fn from_wire(wire: &WireEvent) -> Result<SyncEvent, SyncError> {
                 file_type,
             })
         }
-        "delete" => Ok(SyncEvent::Delete {
-            path: wire.path.clone(),
-            mtime: wire.mtime,
-        }),
+        "delete" => Ok(SyncEvent::Delete { path: wire.path.clone(), mtime: wire.mtime }),
         other => Err(SyncError::Serialize(format!("unknown event kind {other:?}"))),
     }
 }
@@ -158,31 +150,18 @@ impl InMemoryTransport {
 
 impl Default for InMemoryTransport {
     fn default() -> Self {
-        Self {
-            channel: Arc::new(InMemoryChannel::new()),
-        }
+        Self { channel: Arc::new(InMemoryChannel::new()) }
     }
 }
 
 impl SyncTransport for InMemoryTransport {
     fn publish(&self, root: &str, event: &SyncEvent) -> Result<(), SyncError> {
-        self.channel
-            .events
-            .lock()
-            .entry(root.to_string())
-            .or_default()
-            .push(event.clone());
+        self.channel.events.lock().entry(root.to_string()).or_default().push(event.clone());
         Ok(())
     }
 
     fn history(&self, root: &str) -> Result<Vec<SyncEvent>, SyncError> {
-        Ok(self
-            .channel
-            .events
-            .lock()
-            .get(root)
-            .cloned()
-            .unwrap_or_default())
+        Ok(self.channel.events.lock().get(root).cloned().unwrap_or_default())
     }
 }
 
@@ -238,20 +217,13 @@ impl SyncTransport for AblyRestTransport {
         };
         // ably 0.2's publish().send() is async; drive it on a fresh
         // executor (our caller is a command handler, not an async fn).
-        let result = tiny_async::block_on(
-            channel.publish().name(name).json(&wire).send(),
-        )?;
+        let result = tiny_async::block_on(channel.publish().name(name).json(&wire).send())?;
         result.map_err(|e| SyncError::Transport(format!("publish failed: {e}")))
     }
 
     fn history(&self, root: &str) -> Result<Vec<SyncEvent>, SyncError> {
         let channel = self.rest.channels().get(channel_name(root));
-        let page = tiny_async::block_on(async {
-            channel
-                .history()
-                .send()
-                .await
-        })?;
+        let page = tiny_async::block_on(async { channel.history().send().await })?;
         let page = page.map_err(|e| SyncError::Transport(format!("history failed: {e}")))?;
         let items = tiny_async::block_on(page.items())?
             .map_err(|e| SyncError::Transport(format!("history items failed: {e}")))?;
@@ -315,18 +287,9 @@ fn compare_events(a: &SyncEvent, a_device: &str, b: &SyncEvent, b_device: &str) 
 ///
 /// A write for a path that has no existing entry is always applied
 /// (including for paths the local device never saw).
-pub fn merge_event(
-    tree: &mut ScanResult,
-    event: &SyncEvent,
-    device_id: &str,
-) -> bool {
+pub fn merge_event(tree: &mut ScanResult, event: &SyncEvent, device_id: &str) -> bool {
     match event {
-        SyncEvent::Write {
-            path,
-            size,
-            mtime,
-            file_type,
-        } => {
+        SyncEvent::Write { path, size, mtime, file_type } => {
             let existing = find_node(&mut tree.root, path);
             match existing {
                 None => {
@@ -512,9 +475,7 @@ pub struct AblySyncer {
 
 impl std::fmt::Debug for AblySyncer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AblySyncer")
-            .field("device_id", &self.device_id)
-            .finish_non_exhaustive()
+        f.debug_struct("AblySyncer").field("device_id", &self.device_id).finish_non_exhaustive()
     }
 }
 
@@ -574,13 +535,7 @@ impl AblySyncer {
     /// nothing was published locally yet.
     pub fn merge_history(&self, root: &str) -> Result<ScanResult, SyncError> {
         let events = self.transport.history(root)?;
-        let mut tree = self
-            .state
-            .lock()
-            .trees
-            .get(root)
-            .cloned()
-            .unwrap_or_else(empty_result);
+        let mut tree = self.state.lock().trees.get(root).cloned().unwrap_or_else(empty_result);
         for event in &events {
             merge_event(&mut tree, event, &self.device_id);
         }
@@ -593,13 +548,7 @@ impl AblySyncer {
     /// Returns the converged tree. Used by the GUI's live-update path
     /// when a realtime transport delivers events as they arrive.
     pub fn merge_event(&self, root: &str, event: &SyncEvent) -> Result<ScanResult, SyncError> {
-        let mut tree = self
-            .state
-            .lock()
-            .trees
-            .get(root)
-            .cloned()
-            .unwrap_or_else(empty_result);
+        let mut tree = self.state.lock().trees.get(root).cloned().unwrap_or_else(empty_result);
         merge_event(&mut tree, event, &self.device_id);
         self.state.lock().trees.insert(root.to_string(), tree.clone());
         Ok(tree)
@@ -641,19 +590,11 @@ mod tests {
     use std::sync::Arc;
 
     fn write(path: &str, size: u64, mtime: u64) -> SyncEvent {
-        SyncEvent::Write {
-            path: path.into(),
-            size,
-            mtime,
-            file_type: FileType::Other,
-        }
+        SyncEvent::Write { path: path.into(), size, mtime, file_type: FileType::Other }
     }
 
     fn delete(path: &str, mtime: u64) -> SyncEvent {
-        SyncEvent::Delete {
-            path: path.into(),
-            mtime,
-        }
+        SyncEvent::Delete { path: path.into(), mtime }
     }
 
     fn sample_result() -> ScanResult {
@@ -695,10 +636,7 @@ mod tests {
 
     #[test]
     fn should_serialize_delete_event_when_publisher_called() {
-        let event = SyncEvent::Delete {
-            path: "/x/old.txt".into(),
-            mtime: 99,
-        };
+        let event = SyncEvent::Delete { path: "/x/old.txt".into(), mtime: 99 };
         let wire = to_wire(&event);
         assert_eq!(wire.kind, "delete");
         let round = from_wire(&wire).unwrap();
@@ -707,17 +645,9 @@ mod tests {
 
     #[test]
     fn should_reject_unknown_event_kind_when_deserializing() {
-        let wire = WireEvent {
-            kind: "touch".into(),
-            path: "/x".into(),
-            size: 0,
-            mtime: 0,
-            file_type: 0,
-        };
-        assert!(matches!(
-            from_wire(&wire),
-            Err(SyncError::Serialize(_))
-        ));
+        let wire =
+            WireEvent { kind: "touch".into(), path: "/x".into(), size: 0, mtime: 0, file_type: 0 };
+        assert!(matches!(from_wire(&wire), Err(SyncError::Serialize(_))));
     }
 
     #[test]
@@ -855,14 +785,8 @@ mod tests {
         let mut tree_clone = local.clone();
         merge_event(&mut tree_clone, &delete("/tmp/root/a.txt", 10), "device-a");
         local = tree_clone;
-        let event = SyncEvent::Delete {
-            path: "/tmp/root/a.txt".into(),
-            mtime: 10,
-        };
-        device_a
-            .transport()
-            .publish("/root", &event)
-            .expect("publish tombstone");
+        let event = SyncEvent::Delete { path: "/tmp/root/a.txt".into(), mtime: 10 };
+        device_a.transport().publish("/root", &event).expect("publish tombstone");
 
         let mut merged = device_b.merge_history("/root").unwrap();
         assert!(

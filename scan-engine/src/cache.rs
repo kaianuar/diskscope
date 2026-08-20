@@ -125,13 +125,7 @@ impl RedbCache {
         let db = Database::builder()
             .create_with_backend(redb::backends::InMemoryBackend::new())
             .expect("in-memory redb creation never fails");
-        Self {
-            inner: Arc::new(CacheInner {
-                db,
-                path: None,
-                write_lock: Mutex::new(()),
-            }),
-        }
+        Self { inner: Arc::new(CacheInner { db, path: None, write_lock: Mutex::new(()) }) }
     }
 
     /// Open or create a persistent cache at `cache_path`.
@@ -145,7 +139,6 @@ impl RedbCache {
             }),
         })
     }
-
 }
 
 impl Default for RedbCache {
@@ -201,14 +194,9 @@ impl domain::ports::Cache for RedbCache {
         mtime: u64,
         size: u64,
     ) -> Result<(), DomainError> {
-        let cached = CachedScanResult {
-            mtime,
-            size,
-            root: CachedNode::from_domain(&result.root),
-        };
-        let bytes = serde_json::to_vec(&cached).map_err(|e| {
-            DomainError::Io(std::io::Error::other( e.to_string()))
-        })?;
+        let cached = CachedScanResult { mtime, size, root: CachedNode::from_domain(&result.root) };
+        let bytes = serde_json::to_vec(&cached)
+            .map_err(|e| DomainError::Io(std::io::Error::other(e.to_string())))?;
         let _guard = self.inner.write_lock.lock();
         let write_txn = self.inner.db.begin_write().map_err(map_txn_error)?;
         {
@@ -223,23 +211,23 @@ impl domain::ports::Cache for RedbCache {
 // ── Error mapping ──────────────────────────────────────────────────────────
 
 fn map_db_error(e: redb::DatabaseError) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
 }
 
 fn map_txn_error(e: redb::TransactionError) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
 }
 
 fn map_table_error(e: redb::TableError) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
 }
 
 fn map_storage_error(e: redb::StorageError) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
 }
 
 fn map_commit_error(e: redb::CommitError) -> DomainError {
-    DomainError::Io(std::io::Error::other( e.to_string()))
+    DomainError::Io(std::io::Error::other(e.to_string()))
 }
 
 #[cfg(test)]

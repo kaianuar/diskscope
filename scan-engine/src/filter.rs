@@ -73,11 +73,8 @@ fn prune_node(node: &FileNode, filter: &Filter, depth: usize) -> (FileNode, bool
     }
 
     // Node passes — re-aggregate size from surviving children.
-    let size = if new_children.is_empty() {
-        node.size
-    } else {
-        new_children.iter().map(|c| c.size).sum()
-    };
+    let size =
+        if new_children.is_empty() { node.size } else { new_children.iter().map(|c| c.size).sum() };
 
     (
         FileNode {
@@ -109,26 +106,14 @@ mod tests {
     }
 
     fn leaf(path: &str, size: u64, modified: u64, file_type: FileType) -> FileNode {
-        FileNode {
-            path: path.into(),
-            size,
-            modified,
-            file_type,
-            children: vec![],
-        }
+        FileNode { path: path.into(), size, modified, file_type, children: vec![] }
     }
 
     /// Directory whose `size` is the recursive sum of its children
     /// (mirroring `normalize_sizes` in the scanner).
     fn dir(path: &str, modified: u64, children: Vec<FileNode>) -> FileNode {
         let size = children.iter().map(|c| c.size).sum();
-        FileNode {
-            path: path.into(),
-            size,
-            modified,
-            file_type: FileType::Directory,
-            children,
-        }
+        FileNode { path: path.into(), size, modified, file_type: FileType::Directory, children }
     }
 
     fn paths(nodes: &[FileNode]) -> Vec<&str> {
@@ -210,14 +195,8 @@ mod tests {
             0,
         );
 
-        let filtered = apply_filter(
-            &result,
-            &Filter {
-                max_age: Some(100),
-                now: 1000,
-                ..base_filter()
-            },
-        );
+        let filtered =
+            apply_filter(&result, &Filter { max_age: Some(100), now: 1000, ..base_filter() });
 
         assert_eq!(paths(&filtered.root.children), vec!["/project/fresh.rs"]);
     }
@@ -238,14 +217,8 @@ mod tests {
             0,
         );
 
-        let filtered = apply_filter(
-            &original,
-            &Filter {
-                max_age: Some(100),
-                now: 0,
-                ..base_filter()
-            },
-        );
+        let filtered =
+            apply_filter(&original, &Filter { max_age: Some(100), now: 0, ..base_filter() });
 
         assert_eq!(filtered, original);
     }
@@ -268,13 +241,8 @@ mod tests {
             0,
         );
 
-        let filtered = apply_filter(
-            &result,
-            &Filter {
-                name_pattern: Some("proj".into()),
-                ..base_filter()
-            },
-        );
+        let filtered =
+            apply_filter(&result, &Filter { name_pattern: Some("proj".into()), ..base_filter() });
 
         assert_eq!(paths(&filtered.root.children), vec!["proj-src/main.rs"]);
     }
@@ -395,10 +363,7 @@ mod tests {
 
         let filtered = apply_filter(
             &result,
-            &Filter {
-                file_types: Some(vec![FileType::Audio]),
-                ..base_filter()
-            },
+            &Filter { file_types: Some(vec![FileType::Audio]), ..base_filter() },
         );
 
         // music dir kept as container with its Audio child; podcast kept.

@@ -21,9 +21,7 @@ pub fn start_scan(
     app: AppHandle,
 ) -> Result<ScanId, CommandErrorDto> {
     let domain_filter = filter.map(FilterDto::into_domain);
-    runner
-        .start(path, domain_filter, app)
-        .map_err(CommandErrorDto::from)
+    runner.start(path, domain_filter, app).map_err(CommandErrorDto::from)
 }
 
 /// Cancel the scan identified by `scan_id`. Cancelling an already-Done
@@ -45,9 +43,7 @@ pub fn delete_paths(
     runner: State<'_, ScanRunner>,
 ) -> Result<(), CommandErrorDto> {
     if runner.is_running() {
-        return Err(CommandErrorDto::ScanInProgress(
-            "scan in progress".into(),
-        ));
+        return Err(CommandErrorDto::ScanInProgress("scan in progress".into()));
     }
     for path in paths {
         runner.service().move_to_trash(&path)?;
@@ -60,9 +56,7 @@ pub fn delete_paths(
 #[tauri::command]
 pub fn undo_last_delete(runner: State<'_, ScanRunner>) -> Result<(), CommandErrorDto> {
     if runner.is_running() {
-        return Err(CommandErrorDto::ScanInProgress(
-            "scan in progress".into(),
-        ));
+        return Err(CommandErrorDto::ScanInProgress("scan in progress".into()));
     }
     runner.service().undo_last().map_err(CommandErrorDto::from)
 }
@@ -72,9 +66,7 @@ pub fn undo_last_delete(runner: State<'_, ScanRunner>) -> Result<(), CommandErro
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> Result<(), CommandErrorDto> {
     if path.trim().is_empty() {
-        return Err(CommandErrorDto::InvalidPath(
-            "path must not be empty".into(),
-        ));
+        return Err(CommandErrorDto::InvalidPath("path must not be empty".into()));
     }
     opener::reveal(&path).map_err(|e| CommandErrorDto::Io(e.to_string()))
 }
@@ -83,9 +75,7 @@ pub fn reveal_in_explorer(path: String) -> Result<(), CommandErrorDto> {
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), CommandErrorDto> {
     if path.trim().is_empty() {
-        return Err(CommandErrorDto::InvalidPath(
-            "path must not be empty".into(),
-        ));
+        return Err(CommandErrorDto::InvalidPath("path must not be empty".into()));
     }
     opener::open(&path).map_err(|e| CommandErrorDto::Io(e.to_string()))
 }
@@ -93,6 +83,8 @@ pub fn open_file(path: String) -> Result<(), CommandErrorDto> {
 /// Return the finished scan result (if any) as a DTO, so the frontend
 /// can refresh after reconnection or on demand.
 #[tauri::command]
-pub fn get_scan_result(runner: State<'_, ScanRunner>) -> Result<Option<crate::dto::ScanResultDto>, CommandErrorDto> {
+pub fn get_scan_result(
+    runner: State<'_, ScanRunner>,
+) -> Result<Option<crate::dto::ScanResultDto>, CommandErrorDto> {
     Ok(runner.result().map(|r| crate::dto::ScanResultDto::from(&*r)))
 }

@@ -127,8 +127,7 @@ fn to_json(node: &FileNode) -> JsonNode<'_> {
 
 fn render_json(result: &ScanResult, out: &mut dyn Write) -> io::Result<()> {
     let json = to_json(&result.root);
-    serde_json::to_writer_pretty(&mut *out, &json)
-        .map_err(|e| io::Error::other( e.to_string()))?;
+    serde_json::to_writer_pretty(&mut *out, &json).map_err(|e| io::Error::other(e.to_string()))?;
     writeln!(out)?;
     Ok(())
 }
@@ -138,8 +137,7 @@ fn render_json(result: &ScanResult, out: &mut dyn Write) -> io::Result<()> {
 fn render_jsonl(result: &ScanResult, out: &mut dyn Write) -> io::Result<()> {
     for node in walk(result) {
         let json = to_json(node);
-        let bytes = serde_json::to_vec(&json)
-            .map_err(|e| io::Error::other( e.to_string()))?;
+        let bytes = serde_json::to_vec(&json).map_err(|e| io::Error::other(e.to_string()))?;
         out.write_all(&bytes)?;
         out.write_all(b"\n")?;
     }
@@ -165,16 +163,8 @@ fn write_tree_node(node: &FileNode, prefix: &str, is_last: bool, out: &mut Strin
     };
     let size_str = format_size(node.size);
     let type_str = file_type_name(node.file_type);
-    let _ = writeln!(
-        out,
-        "{prefix}{branch}{name} [{size_str}, {type_str}]",
-        name = node.path,
-    );
-    let child_prefix = if is_last {
-        format!("{prefix}    ")
-    } else {
-        format!("{prefix}│   ")
-    };
+    let _ = writeln!(out, "{prefix}{branch}{name} [{size_str}, {type_str}]", name = node.path,);
+    let child_prefix = if is_last { format!("{prefix}    ") } else { format!("{prefix}│   ") };
     let last_idx = node.children.len().saturating_sub(1);
     for (i, child) in node.children.iter().enumerate() {
         write_tree_node(child, &child_prefix, i == last_idx, out);
@@ -218,13 +208,7 @@ mod tests {
 
     /// Leaf node with the given path, size, and file type.
     fn leaf(path: &str, size: u64, file_type: FileType) -> FileNode {
-        FileNode {
-            path: path.to_string(),
-            size,
-            modified: 0,
-            file_type,
-            children: Vec::new(),
-        }
+        FileNode { path: path.to_string(), size, modified: 0, file_type, children: Vec::new() }
     }
 
     /// Directory node with the given path and children.
@@ -295,10 +279,8 @@ mod tests {
         // ends the row right after that separator.
         let rows: Vec<&str> = output.lines().skip(1).collect();
         assert!(rows.len() >= 4, "expected root + 3 data rows: {output}");
-        let path_starts: Vec<usize> = rows
-            .iter()
-            .map(|line| line.rfind("  ").map(|i| i + 2).unwrap_or(0))
-            .collect();
+        let path_starts: Vec<usize> =
+            rows.iter().map(|line| line.rfind("  ").map(|i| i + 2).unwrap_or(0)).collect();
         assert!(
             path_starts.windows(2).all(|w| w[0] == w[1]),
             "PATH column starts at inconsistent offsets: {path_starts:?}"
@@ -330,13 +312,8 @@ mod tests {
 
     #[test]
     fn should_produce_valid_json_when_result_has_children() {
-        let result = ScanResult::from_tree(
-            dir(
-                "",
-                vec![leaf("file.txt", 10, FileType::Document)],
-            ),
-            0,
-        );
+        let result =
+            ScanResult::from_tree(dir("", vec![leaf("file.txt", 10, FileType::Document)]), 0);
 
         let output = render_to_string(&result, OutputFormat::Json);
 
@@ -347,28 +324,19 @@ mod tests {
 
     #[test]
     fn should_include_all_fields_when_serializing_a_node() {
-        let result = ScanResult::from_tree(
-            dir(
-                "",
-                vec![leaf("song.mp3", 2048, FileType::Audio)],
-            ),
-            0,
-        );
+        let result =
+            ScanResult::from_tree(dir("", vec![leaf("song.mp3", 2048, FileType::Audio)]), 0);
 
         let output = render_to_string(&result, OutputFormat::Json);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&output).expect("output should be valid JSON");
-        let root = parsed
-            .as_object()
-            .expect("root should be an object");
+        let root = parsed.as_object().expect("root should be an object");
         assert_eq!(root["path"], "");
         assert_eq!(root["size"], 2048);
         assert_eq!(root["modified"], 0);
         assert_eq!(root["file_type"], "dir");
-        let children = root["children"]
-            .as_array()
-            .expect("children should be an array");
+        let children = root["children"].as_array().expect("children should be an array");
         assert_eq!(children.len(), 1);
         let child = &children[0];
         assert_eq!(child["path"], "song.mp3");
@@ -386,10 +354,7 @@ mod tests {
             dir(
                 "",
                 vec![
-                    dir(
-                        "sub",
-                        vec![leaf("deep.txt", 5, FileType::Document)],
-                    ),
+                    dir("sub", vec![leaf("deep.txt", 5, FileType::Document)]),
                     leaf("top.bin", 7, FileType::Other),
                 ],
             ),
@@ -405,13 +370,7 @@ mod tests {
     #[test]
     fn should_emit_valid_json_on_each_line_when_serializing() {
         let result = ScanResult::from_tree(
-            dir(
-                "",
-                vec![dir(
-                    "sub",
-                    vec![leaf("deep.txt", 5, FileType::Document)],
-                )],
-            ),
+            dir("", vec![dir("sub", vec![leaf("deep.txt", 5, FileType::Document)])]),
             0,
         );
 
@@ -459,10 +418,7 @@ mod tests {
     #[test]
     fn should_indent_children_when_rendering_nested_tree() {
         let result = ScanResult::from_tree(
-            dir(
-                "",
-                vec![dir("docs", vec![leaf("readme.md", 3, FileType::Document)])],
-            ),
+            dir("", vec![dir("docs", vec![leaf("readme.md", 3, FileType::Document)])]),
             0,
         );
 
@@ -512,8 +468,7 @@ mod tests {
         // Table: root row present (empty path row after the header).
         assert!(table.lines().nth(1).is_some(), "table: {table}");
         // JSON: root object present even with no children.
-        let parsed: serde_json::Value =
-            serde_json::from_str(&json).expect("JSON should be valid");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("JSON should be valid");
         assert!(parsed["children"].is_array(), "json: {json}");
         assert!(parsed["children"].as_array().unwrap().is_empty());
         // JSONL: first (only) line is the root node as a JSON object.

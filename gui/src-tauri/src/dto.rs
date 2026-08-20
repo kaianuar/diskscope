@@ -53,11 +53,7 @@ pub struct PathErrorDto {
 
 impl From<&PathError> for PathErrorDto {
     fn from(e: &PathError) -> Self {
-        Self {
-            path: e.path.clone(),
-            kind: ErrorKindDto::from(&e.kind),
-            message: e.message.clone(),
-        }
+        Self { path: e.path.clone(), kind: ErrorKindDto::from(&e.kind), message: e.message.clone() }
     }
 }
 
@@ -233,9 +229,7 @@ impl FilterDto {
         Filter {
             min_size: self.min_size,
             max_size: self.max_size,
-            file_types: self
-                .file_types
-                .map(|v| v.into_iter().map(FileType::from).collect()),
+            file_types: self.file_types.map(|v| v.into_iter().map(FileType::from).collect()),
             name_pattern: self.name_pattern,
             max_age: self.max_age,
             now,
@@ -321,11 +315,7 @@ mod tests {
 
     #[test]
     fn filter_dto_stamps_now() {
-        let dto = FilterDto {
-            max_age: Some(3600),
-            min_size: Some(10),
-            ..Default::default()
-        };
+        let dto = FilterDto { max_age: Some(3600), min_size: Some(10), ..Default::default() };
         let f = dto.into_domain();
         assert_eq!(f.max_age, Some(3600));
         assert_eq!(f.min_size, Some(10));

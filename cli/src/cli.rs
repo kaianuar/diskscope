@@ -160,38 +160,30 @@ pub enum SortArg {
 impl From<SortArg> for SortSpec {
     fn from(arg: SortArg) -> Self {
         match arg {
-            SortArg::NameAsc => SortSpec {
-                column: SortColumn::Name,
-                direction: SortDirection::Ascending,
-            },
-            SortArg::NameDesc => SortSpec {
-                column: SortColumn::Name,
-                direction: SortDirection::Descending,
-            },
-            SortArg::SizeAsc => SortSpec {
-                column: SortColumn::Size,
-                direction: SortDirection::Ascending,
-            },
-            SortArg::SizeDesc => SortSpec {
-                column: SortColumn::Size,
-                direction: SortDirection::Descending,
-            },
-            SortArg::ModifiedAsc => SortSpec {
-                column: SortColumn::Modified,
-                direction: SortDirection::Ascending,
-            },
-            SortArg::ModifiedDesc => SortSpec {
-                column: SortColumn::Modified,
-                direction: SortDirection::Descending,
-            },
-            SortArg::TypeAsc => SortSpec {
-                column: SortColumn::Type,
-                direction: SortDirection::Ascending,
-            },
-            SortArg::TypeDesc => SortSpec {
-                column: SortColumn::Type,
-                direction: SortDirection::Descending,
-            },
+            SortArg::NameAsc => {
+                SortSpec { column: SortColumn::Name, direction: SortDirection::Ascending }
+            }
+            SortArg::NameDesc => {
+                SortSpec { column: SortColumn::Name, direction: SortDirection::Descending }
+            }
+            SortArg::SizeAsc => {
+                SortSpec { column: SortColumn::Size, direction: SortDirection::Ascending }
+            }
+            SortArg::SizeDesc => {
+                SortSpec { column: SortColumn::Size, direction: SortDirection::Descending }
+            }
+            SortArg::ModifiedAsc => {
+                SortSpec { column: SortColumn::Modified, direction: SortDirection::Ascending }
+            }
+            SortArg::ModifiedDesc => {
+                SortSpec { column: SortColumn::Modified, direction: SortDirection::Descending }
+            }
+            SortArg::TypeAsc => {
+                SortSpec { column: SortColumn::Type, direction: SortDirection::Ascending }
+            }
+            SortArg::TypeDesc => {
+                SortSpec { column: SortColumn::Type, direction: SortDirection::Descending }
+            }
         }
     }
 }

@@ -111,10 +111,7 @@ impl ScanRunner {
     /// Snapshot of the finished scan, if any.
     pub fn result(&self) -> Option<Arc<ScanResult>> {
         match &*self.state.lock() {
-            ScanState::Done {
-                result: Some(result),
-                ..
-            } => Some(Arc::clone(result)),
+            ScanState::Done { result: Some(result), .. } => Some(Arc::clone(result)),
             _ => None,
         }
     }
@@ -141,16 +138,12 @@ impl ScanRunner {
     ) -> Result<ScanId, DomainError> {
         let path = path.trim().to_string();
         if path.is_empty() {
-            return Err(DomainError::InvalidPath(
-                "scan path must not be empty".into(),
-            ));
+            return Err(DomainError::InvalidPath("scan path must not be empty".into()));
         }
 
         let mut guard = self.state.lock();
         if let ScanState::Running { id, .. } = &*guard {
-            return Err(DomainError::InvalidPath(format!(
-                "a scan is already running (id {id})"
-            )));
+            return Err(DomainError::InvalidPath(format!("a scan is already running (id {id})")));
         }
 
         let id = ScanId(self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -166,9 +159,9 @@ impl ScanRunner {
             }
             let outcome = match filter_for_thread {
                 Some(f) => match f.validate() {
-                    Ok(()) => service
-                        .scan(&path)
-                        .map(|r| scan_engine::filter::apply_filter(&r, &f)),
+                    Ok(()) => {
+                        service.scan(&path).map(|r| scan_engine::filter::apply_filter(&r, &f))
+                    }
                     Err(e) => Err(e),
                 },
                 None => service.scan(&path),
@@ -273,14 +266,10 @@ mod tests {
 
     impl Scanner for FailScanner {
         fn scan(&self, _path: &str) -> Result<ScanResult, DomainError> {
-            Err(DomainError::Io(std::io::Error::other(
-                "simulated scan failure",
-            )))
+            Err(DomainError::Io(std::io::Error::other("simulated scan failure")))
         }
         fn stat_root(&self, _path: &str) -> Result<u64, DomainError> {
-            Err(DomainError::Io(std::io::Error::other(
-                "simulated scan failure",
-            )))
+            Err(DomainError::Io(std::io::Error::other("simulated scan failure")))
         }
     }
 
@@ -342,10 +331,7 @@ mod tests {
 
         let id = runner.collect();
         assert!(id.is_some(), "collect should return the scan id");
-        assert!(
-            runner.result().is_none(),
-            "result() must be None when scan failed"
-        );
+        assert!(runner.result().is_none(), "result() must be None when scan failed");
     }
 
     #[test]
