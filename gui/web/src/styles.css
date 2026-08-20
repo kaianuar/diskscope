@@ -18,6 +18,17 @@
   --ds-radius-md: 10px;
 }
 
+:root[data-theme="light"] {
+  --ds-primary: #2563eb;
+  --ds-background: #f8fafc;
+  --ds-surface: #ffffff;
+  --ds-text: #0f172a;
+  --ds-muted: #64748b;
+  --ds-accent: #d97706;
+  --ds-success: #16a34a;
+  --ds-danger: #dc2626;
+}
+
 * {
   box-sizing: border-box;
 }
