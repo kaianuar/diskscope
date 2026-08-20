@@ -241,3 +241,239 @@ fn map_storage_error(e: redb::StorageError) -> DomainError {
 fn map_commit_error(e: redb::CommitError) -> DomainError {
     DomainError::Io(std::io::Error::other( e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain::ports::Cache;
+
+    /// A three-level tree mirroring the domain tests' `sample_tree`:
+    /// `/project` (Directory) → `/project/src` (Directory) →
+    /// `/project/src/main.rs` (Code), plus `/project/README.md` (Document).
+    /// Directory sizes are the recursive sum of descendants, matching the
+    /// scanner's `normalize_sizes` invariant.
+    fn sample_result() -> ScanResult {
+        ScanResult::from_tree(
+            FileNode {
+                path: "/project".into(),
+                size: 1500,
+                modified: 100,
+                file_type: FileType::Directory,
+                children: vec![
+                    FileNode {
+                        path: "/project/src".into(),
+                        size: 1000,
+                        modified: 90,
+                        file_type: FileType::Directory,
+                        children: vec![FileNode {
+                            path: "/project/src/main.rs".into(),
+                            size: 1000,
+                            modified: 80,
+                            file_type: FileType::Code,
+                            children: vec![],
+                        }],
+                    },
+                    FileNode {
+                        path: "/project/README.md".into(),
+                        size: 500,
+                        modified: 70,
+                        file_type: FileType::Document,
+                        children: vec![],
+                    },
+                ],
+            },
+            0,
+        )
+    }
+
+    #[test]
+    fn should_return_none_when_get_called_on_empty_cache() {
+        // Arrange
+        let cache = RedbCache::new();
+
+        // Act
+        let got = cache.get("/project");
+
+        // Assert
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn should_return_stored_result_when_put_then_get() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+
+        // Act
+        let got = cache.get("/project").unwrap();
+
+        // Assert
+        assert_eq!(got.root, result.root);
+    }
+
+    #[test]
+    fn should_return_none_after_invalidate_when_entry_removed() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+        assert!(cache.get("/project").is_some());
+
+        // Act
+        cache.invalidate("/project").unwrap();
+
+        // Assert
+        assert_eq!(cache.get("/project"), None);
+    }
+
+    #[test]
+    fn should_silently_succeed_when_invalidate_missing_key() {
+        // Arrange
+        let cache = RedbCache::new();
+
+        // Act
+        let result = cache.invalidate("/never-stored");
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_overwrite_when_put_called_twice_for_same_key() {
+        // Arrange
+        let cache = RedbCache::new();
+        let first = sample_result();
+        let second = ScanResult::from_tree(
+            FileNode {
+                path: "/project".into(),
+                size: 10,
+                modified: 5,
+                file_type: FileType::Directory,
+                children: vec![FileNode {
+                    path: "/project/notes.txt".into(),
+                    size: 10,
+                    modified: 5,
+                    file_type: FileType::Other,
+                    children: vec![],
+                }],
+            },
+            0,
+        );
+        cache.put("/project", &first).unwrap();
+
+        // Act
+        cache.put("/project", &second).unwrap();
+
+        // Assert
+        assert_eq!(cache.get("/project").unwrap().root, second.root);
+    }
+
+    #[test]
+    fn should_store_and_retrieve_metadata_when_put_with_metadata() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+
+        // Act
+        cache.put_with_metadata("/project", &result, 100, 200).unwrap();
+        let got = cache.get_with_metadata("/project").unwrap();
+
+        // Assert
+        assert_eq!(got, (result, 100, 200));
+    }
+
+    #[test]
+    fn should_return_zero_metadata_when_put_without_metadata() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+
+        // Act
+        let (_, mtime, size) = cache.get_with_metadata("/project").unwrap();
+
+        // Assert
+        assert_eq!((mtime, size), (0, 0));
+    }
+
+    #[test]
+    fn should_round_trip_file_types_when_cached() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = ScanResult::from_tree(
+            FileNode {
+                path: "/media".into(),
+                size: 3000,
+                modified: 0,
+                file_type: FileType::Directory,
+                children: vec![
+                    FileNode {
+                        path: "/media/song.mp3".into(),
+                        size: 1000,
+                        modified: 0,
+                        file_type: FileType::Audio,
+                        children: vec![],
+                    },
+                    FileNode {
+                        path: "/media/clip.mp4".into(),
+                        size: 2000,
+                        modified: 0,
+                        file_type: FileType::Video,
+                        children: vec![],
+                    },
+                ],
+            },
+            0,
+        );
+        cache.put("/media", &result).unwrap();
+
+        // Act
+        let got = cache.get("/media").unwrap();
+
+        // Assert
+        assert_eq!(got.root, result.root);
+    }
+
+    #[test]
+    fn should_round_trip_nested_tree_when_cached() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+
+        // Act
+        let got = cache.get("/project").unwrap();
+
+        // Assert
+        assert_eq!(got.root, result.root);
+    }
+
+    #[test]
+    fn should_preserve_total_size_when_round_tripped() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+
+        // Act
+        let got = cache.get("/project").unwrap();
+
+        // Assert
+        assert_eq!(got.total_size, result.total_size);
+    }
+
+    #[test]
+    fn should_preserve_file_count_when_round_tripped() {
+        // Arrange
+        let cache = RedbCache::new();
+        let result = sample_result();
+        cache.put("/project", &result).unwrap();
+
+        // Act
+        let got = cache.get("/project").unwrap();
+
+        // Assert
+        assert_eq!(got.file_count, result.file_count);
+    }
+}
