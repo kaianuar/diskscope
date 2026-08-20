@@ -146,9 +146,35 @@ impl RedbCache {
         })
     }
 
-    /// Look up `path` and return the cached entry with its stored
-    /// mtime / size metadata. Used by the incremental-scan check.
-    pub fn get_with_metadata(&self, path: &str) -> Option<(ScanResult, u64, u64)> {
+}
+
+impl Default for RedbCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl domain::ports::Cache for RedbCache {
+    fn get(&self, path: &str) -> Option<ScanResult> {
+        self.get_with_metadata(path).map(|(r, _, _)| r)
+    }
+
+    fn put(&self, path: &str, result: &ScanResult) -> Result<(), DomainError> {
+        self.put_with_metadata(path, result, 0, 0)
+    }
+
+    fn invalidate(&self, path: &str) -> Result<(), DomainError> {
+        let _guard = self.inner.write_lock.lock();
+        let write_txn = self.inner.db.begin_write().map_err(map_txn_error)?;
+        {
+            let mut table = write_txn.open_table(SCANS_TABLE).map_err(map_table_error)?;
+            table.remove(path).map_err(map_storage_error)?;
+        }
+        write_txn.commit().map_err(map_commit_error)?;
+        Ok(())
+    }
+
+    fn get_with_metadata(&self, path: &str) -> Option<(ScanResult, u64, u64)> {
         let read_txn = self.inner.db.begin_read().ok()?;
         let table = read_txn.open_table(SCANS_TABLE).ok()?;
         let guard = table.get(path).ok()?;
@@ -168,9 +194,7 @@ impl RedbCache {
         Some((result, cached.mtime, cached.size))
     }
 
-    /// Persist `result` along with `mtime` and `size` for `path`.
-    /// Companion to [`Self::get_with_metadata`].
-    pub fn put_with_metadata(
+    fn put_with_metadata(
         &self,
         path: &str,
         result: &ScanResult,
@@ -190,38 +214,6 @@ impl RedbCache {
         {
             let mut table = write_txn.open_table(SCANS_TABLE).map_err(map_table_error)?;
             table.insert(path, bytes.as_slice()).map_err(map_storage_error)?;
-        }
-        write_txn.commit().map_err(map_commit_error)?;
-        Ok(())
-    }
-}
-
-impl Default for RedbCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl domain::ports::Cache for RedbCache {
-    fn get(&self, path: &str) -> Option<ScanResult> {
-        self.get_with_metadata(path).map(|(r, _, _)| r)
-    }
-
-    fn put(&self, path: &str, result: &ScanResult) -> Result<(), DomainError> {
-        // Default `put` (port-level) stores no metadata — incremental
-        // checks via `get_with_metadata` will treat entries this way
-        // as "no mtime to compare", forcing a rescan.
-        let mtime = 0u64;
-        let size = 0u64;
-        self.put_with_metadata(path, result, mtime, size)
-    }
-
-    fn invalidate(&self, path: &str) -> Result<(), DomainError> {
-        let _guard = self.inner.write_lock.lock();
-        let write_txn = self.inner.db.begin_write().map_err(map_txn_error)?;
-        {
-            let mut table = write_txn.open_table(SCANS_TABLE).map_err(map_table_error)?;
-            table.remove(path).map_err(map_storage_error)?;
         }
         write_txn.commit().map_err(map_commit_error)?;
         Ok(())

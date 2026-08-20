@@ -20,18 +20,6 @@ use domain::{DomainError, FileNode, FileType, ScanResult};
 /// Concrete `DirEntry` type used by the default `jwalk::WalkDir`.
 type JwalkDirEntry = DirEntry<((), ())>;
 
-/// Result of stat-ing a scan root — used by [`ScanService`] to decide
-/// whether a cached entry is still valid (same mtime + same size).
-#[derive(Debug, Clone, Copy)]
-pub struct RootMeta {
-    /// Last-modified time of the root directory, in Unix seconds.
-    pub modified: u64,
-    /// Total recursive bytes under the root. Used as a secondary
-    /// proxy for "did anything change?" — if the on-disk byte count
-    /// differs, the cached tree is stale.
-    pub total_bytes: u64,
-}
-
 /// Parallel filesystem walker. Cheap to construct.
 #[derive(Debug, Clone, Default)]
 pub struct JwalkScanner {
@@ -44,36 +32,6 @@ impl JwalkScanner {
     /// to `1` for deterministic single-threaded walks in tests.
     pub fn new() -> Self {
         Self { _priv: () }
-    }
-
-    /// Stat the scan root without walking the tree. Returns the root's
-    /// mtime and the recursive total byte count.
-    pub fn stat_root(&self, path: &str) -> Result<RootMeta, DomainError> {
-        let root = validate_root(path)?;
-
-        let mtime = root
-            .metadata()
-            .map_err(DomainError::Io)?
-            .modified()
-            .map_err(DomainError::Io)?;
-        let modified = mtime
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .map_err(|e| io::Error::other(format!("mtime before unix epoch: {e}")))?;
-
-        let total_bytes: u64 = WalkDir::new(&root)
-            .skip_hidden(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter_map(|e| e.metadata().ok())
-            .map(|m| m.len())
-            .sum();
-
-        Ok(RootMeta {
-            modified,
-            total_bytes,
-        })
     }
 
     /// Walk `path` and build the full `FileNode` tree.
@@ -103,6 +61,21 @@ impl domain::ports::Scanner for JwalkScanner {
         let root = self.scan_raw(path)?;
         let elapsed_ms = start.elapsed().as_millis() as u64;
         Ok(ScanResult::from_tree(root, elapsed_ms))
+    }
+
+    fn stat_root(&self, path: &str) -> Result<u64, DomainError> {
+        let root = validate_root(path)?;
+        let mtime = root
+            .metadata()
+            .map_err(DomainError::Io)?
+            .modified()
+            .map_err(DomainError::Io)?;
+        mtime
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .map_err(|e| DomainError::Io(io::Error::other(format!(
+                "mtime before unix epoch: {e}"
+            ))))
     }
 }
 
