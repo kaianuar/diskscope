@@ -54,6 +54,9 @@ diskscope scan [OPTIONS] <PATH>
       --max-depth <N>        Maximum tree depth, inclusive (root = 0)
       --no-cache             Bypass the incremental cache
       --quiet                Suppress the summary line (output is still printed)
+      --export <FILE>        Write a self-contained interactive HTML snapshot
+                             (treemap + table + breadcrumb); opens in any browser.
+                             Overrides --format when both are present.
 ```
 
 **Note:** size filters take **raw bytes**, not human-readable strings. `--min-size 100MB` will fail — use `--min-size 104857600` instead.
@@ -88,6 +91,10 @@ diskscope delete --undo
 
 # 9. --quiet — output still printed, only the "scanned N entries" line is hidden
 diskscope scan . --quiet
+
+# 10. --export — write a self-contained interactive HTML snapshot
+diskscope scan . --export snapshot.html
+# Open snapshot.html in any browser: treemap, table, breadcrumb, click to drill.
 ```
 
 ## How It Works
