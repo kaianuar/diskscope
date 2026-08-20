@@ -170,9 +170,7 @@ fn write_tree_node(node: &FileNode, prefix: &str, is_last: bool, out: &mut Strin
         "{prefix}{branch}{name} [{size_str}, {type_str}]",
         name = node.path,
     );
-    let child_prefix = if prefix.is_empty() {
-        String::new()
-    } else if is_last {
+    let child_prefix = if is_last {
         format!("{prefix}    ")
     } else {
         format!("{prefix}│   ")
@@ -447,31 +445,15 @@ mod tests {
 
         let output = render_to_string(&result, OutputFormat::Tree);
 
-        // BUG: `write_tree_node` is supposed to render tree-style output
-        // with branch glyphs (`├──` / `└──`) and indentation, per the
-        // module docs. `render_tree` calls it with an empty root prefix,
-        // and the `prefix.is_empty()` branch of `child_prefix` keeps every
-        // descendant's prefix empty, so `branch` is always `""` and the
-        // output is flat: one bare line per node, no glyphs, no indent.
-        // This test asserts the CURRENT (buggy) behavior; once the renderer
-        // is fixed, it should assert `├── docs` / `└── top.txt` instead.
-        for name in ["docs", "readme.md", "top.txt"] {
-            let line = output
-                .lines()
-                .find(|l| l.contains(name))
-                .unwrap_or_else(|| panic!("tree output missing {name}: {output}"));
-            assert!(
-                !line.contains("├── ") && !line.contains("└── "),
-                "expected no branch glyphs (flat output), got: {line}"
-            );
-            assert!(
-                line.starts_with(name),
-                "expected line to start with the node path, got: {line}"
-            );
-        }
-        assert!(output.contains("docs [3 B, dir]"), "got: {output}");
-        assert!(output.contains("readme.md [3 B, document]"), "got: {output}");
-        assert!(output.contains("top.txt [9 B, other]"), "got: {output}");
+        // docs is not the last child → ├─; top.txt is last → └─.
+        let docs_line = output.lines().find(|l| l.contains("docs [")).unwrap();
+        assert!(docs_line.contains("├── docs"), "got: {docs_line}");
+        let top_line = output.lines().find(|l| l.contains("top.txt")).unwrap();
+        assert!(top_line.contains("└── top.txt"), "got: {top_line}");
+        // readme.md is nested under docs (only child → └──).
+        let readme_line = output.lines().find(|l| l.contains("readme.md")).unwrap();
+        assert!(readme_line.contains("└── readme.md"), "got: {readme_line}");
+        assert!(readme_line.starts_with("    "), "expected indent, got: {readme_line}");
     }
 
     #[test]
@@ -486,29 +468,18 @@ mod tests {
 
         let output = render_to_string(&result, OutputFormat::Tree);
 
-        // BUG: nested children are supposed to be indented under their
-        // parent (module docs promise "tree-style indented output"). The
-        // broken prefix propagation in `write_tree_node` (see the glyph
-        // test above) also flattens indentation: every line starts at
-        // column 0 with no leading whitespace. This asserts the CURRENT
-        // (buggy) behavior; the intended output is:
-        //
         //     [3 B, dir]
         //     └── docs [3 B, dir]
         //         └── readme.md [3 B, document]
-        //
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3, "root + docs + readme.md: {output}");
-        // The root line starts with a space because the synthetic root has
-        // an empty path; the descendants must start at column 0.
-        for line in &lines[1..] {
-            assert!(
-                line.starts_with(line.trim_start()) && !line.starts_with(' '),
-                "expected no leading indentation (flat output), got: {line}"
-            );
-        }
-        assert_eq!(lines[1], "docs [3 B, dir]");
-        assert_eq!(lines[2], "readme.md [3 B, document]");
+        assert!(lines[1].contains("└── docs"), "got: {}", lines[1]);
+        // readme.md indented under docs.
+        assert!(
+            lines[2].starts_with("    ") && lines[2].contains("└── readme.md"),
+            "expected indentation + glyph, got: {}",
+            lines[2]
+        );
     }
 
     // ── Cross-format ────────────────────────────────────────────────────
