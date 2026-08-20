@@ -30,6 +30,7 @@ pub mod cache;
 pub mod filter;
 pub mod format;
 pub mod scanner;
+pub mod snapshot;
 pub mod sort;
 pub mod trash;
 
@@ -46,6 +47,7 @@ use domain::{DomainError, ScanResult};
 pub use cache::RedbCache;
 pub use format::OutputFormat;
 pub use scanner::JwalkScanner;
+pub use snapshot::render_html_snapshot;
 pub use trash::TrashBin;
 
 /// Convenience composition of the scan-engine adapters.
