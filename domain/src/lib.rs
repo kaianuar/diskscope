@@ -24,6 +24,9 @@ use std::path::Path;
 
 pub mod ports;
 
+#[cfg(feature = "sync")]
+pub mod sync;
+
 // ── PathError ─────────────────────────────────────────────────────────────
 
 /// A non-fatal filesystem error encountered while scanning.

@@ -20,96 +20,12 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::fmt;
-use std::future::Future;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use domain::{DomainError, FileNode, FileType, ScanResult};
-
-// ── SyncError ─────────────────────────────────────────────────────────────
-
-/// Errors returned by the sync layer.
-///
-/// Kept as a concrete `DomainError` mapping so callers see a single error
-/// type end-to-end: transport and serialization failures become
-/// [`DomainError::Io`], missing keys become [`DomainError::InvalidPath`].
-#[derive(Debug)]
-pub enum SyncError {
-    /// No API key is configured; sync cannot start.
-    MissingApiKey,
-    /// An event failed to serialize (should not happen for our types).
-    Serialize(String),
-    /// The transport rejected a publish or receive operation.
-    Transport(String),
-}
-
-impl fmt::Display for SyncError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingApiKey => write!(f, "sync requires an Ably API key"),
-            Self::Serialize(msg) => write!(f, "sync serialize error: {msg}"),
-            Self::Transport(msg) => write!(f, "sync transport error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for SyncError {}
-
-impl From<SyncError> for DomainError {
-    fn from(err: SyncError) -> Self {
-        match err {
-            SyncError::MissingApiKey => DomainError::InvalidPath(err.to_string()),
-            SyncError::Serialize(_) | SyncError::Transport(_) => {
-                DomainError::Io(std::io::Error::other(err.to_string()))
-            }
-        }
-    }
-}
-
-// ── Event types ───────────────────────────────────────────────────────────
-
-/// A per-file change event streamed over the sync channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyncEvent {
-    /// A file/directory was created or changed. `mtime` is the local
-    /// last-modified time at the moment of the change.
-    Write {
-        /// Absolute path of the changed entry.
-        path: String,
-        /// Size in bytes at the moment of the change.
-        size: u64,
-        /// Unix timestamp (seconds) at the moment of the change.
-        mtime: u64,
-        /// Coarse classification of the entry.
-        file_type: FileType,
-    },
-    /// A deletion tombstone. `mtime` is the local mtime of the entry at
-    /// delete time; a tombstone always beats an older write.
-    Delete {
-        /// Absolute path of the deleted entry.
-        path: String,
-        /// Unix timestamp (seconds) of the deleted entry's mtime.
-        mtime: u64,
-    },
-}
-
-impl SyncEvent {
-    /// The path this event refers to.
-    pub fn path(&self) -> &str {
-        match self {
-            Self::Write { path, .. } | Self::Delete { path, .. } => path,
-        }
-    }
-
-    /// The event timestamp (mtime), used for LWW conflict resolution.
-    pub fn mtime(&self) -> u64 {
-        match self {
-            Self::Write { mtime, .. } | Self::Delete { mtime, .. } => *mtime,
-        }
-    }
-}
+use domain::sync::{SyncError, SyncEvent, SyncTransport};
+use domain::{FileNode, FileType, ScanResult};
 
 /// JSON-friendly wire form of [`SyncEvent`].
 ///
@@ -208,24 +124,6 @@ fn byte_to_file_type(b: u8) -> Option<FileType> {
     })
 }
 
-// ── Transport port ────────────────────────────────────────────────────────
-
-/// Port for the underlying sync channel (hexagonal: domain-facing contract,
-/// adapter implementations on each side).
-///
-/// Implementations deliver events to a logical channel for a scan root and
-/// expose the events previously published to it. This is what lets the
-/// conflict-resolution logic be unit-tested without a network.
-pub trait SyncTransport {
-    /// Publish `event` on the channel for `root`. Returns
-    /// [`SyncError::Transport`] on backend failure.
-    fn publish(&self, root: &str, event: &SyncEvent) -> Result<(), SyncError>;
-
-    /// Events previously published to the channel for `root`, in publish
-    /// order. Used to replay history into the local tree.
-    fn history(&self, root: &str) -> Result<Vec<SyncEvent>, SyncError>;
-}
-
 // ── In-memory transport (test double) ─────────────────────────────────────
 
 /// In-memory [`SyncTransport`] for tests and offline demos.
@@ -319,6 +217,17 @@ impl AblyRestTransport {
     }
 }
 
+/// Extract the data payload from an Ably [`Message`](ably::rest::Message)
+/// as a JSON string.
+fn ably_data(msg: ably::rest::Message) -> String {
+    match msg.data {
+        ably::rest::Data::String(s) => s,
+        ably::rest::Data::JSON(v) => serde_json::to_string(&v).unwrap_or_default(),
+        ably::rest::Data::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
+        ably::rest::Data::None => String::new(),
+    }
+}
+
 impl SyncTransport for AblyRestTransport {
     fn publish(&self, root: &str, event: &SyncEvent) -> Result<(), SyncError> {
         let channel = self.rest.channels().get(channel_name(root));
@@ -337,13 +246,15 @@ impl SyncTransport for AblyRestTransport {
 
     fn history(&self, root: &str) -> Result<Vec<SyncEvent>, SyncError> {
         let channel = self.rest.channels().get(channel_name(root));
-        let items = tiny_async::block_on(async {
+        let page = tiny_async::block_on(async {
             channel
                 .history()
-                .items()
+                .send()
                 .await
         })?;
-        let items = items.map_err(|e| SyncError::Transport(format!("history failed: {e}")))?;
+        let page = page.map_err(|e| SyncError::Transport(format!("history failed: {e}")))?;
+        let items = tiny_async::block_on(page.items())?
+            .map_err(|e| SyncError::Transport(format!("history items failed: {e}")))?;
         let mut events = Vec::new();
         for item in items {
             let data = ably_data(item);
@@ -456,7 +367,7 @@ pub fn merge_event(
                 }
             }
         }
-        SyncEvent::Delete { path, mtime } => {
+        SyncEvent::Delete { path, .. } => {
             let existing = find_node(&mut tree.root, path);
             match existing {
                 None => false,
@@ -546,16 +457,12 @@ fn remove_node(root: &mut FileNode, path: &str) {
         root.size = 0;
         return;
     }
-    root.children.retain(|child| {
-        if child.path == path {
-            false
-        } else {
-            let mut owned = child.clone();
-            remove_node(&mut owned, path);
-            *child = owned;
-            true
+    for child in &mut root.children {
+        if child.path != path {
+            remove_node(child, path);
         }
-    });
+    }
+    root.children.retain(|child| child.path != path);
 }
 
 // ── tiny async executor ───────────────────────────────────────────────────
@@ -567,19 +474,21 @@ fn remove_node(root: &mut FileNode, path: &str) {
 /// only need a reactor once I/O is polled; block_on spins a dedicated
 /// thread so the synchronous caller is never blocked by a worker pool.
 mod tiny_async {
+    use std::future::Future;
+
+    use super::SyncError;
+
     /// Block until `future` completes, returning its output.
+    ///
+    /// Builds a single-threaded tokio runtime on the calling thread.
+    /// Safe to call from a sync context that is *not* already inside a
+    /// tokio runtime (panics if it is).
     pub fn block_on<F: Future>(future: F) -> Result<F::Output, SyncError> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || -> Result<(), SyncError> {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| SyncError::Transport(e.to_string()))?;
-            let output = runtime.block_on(future);
-            let _ = tx.send(output);
-            Ok(())
-        });
-        rx.recv().map_err(|e| SyncError::Transport(e.to_string()))?
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SyncError::Transport(e.to_string()))?;
+        Ok(runtime.block_on(future))
     }
 }
 
@@ -594,11 +503,19 @@ mod tiny_async {
 ///
 /// Construct via [`AblySyncer::with_transport`] for tests; the production
 /// constructor validates the API key and builds an [`AblyRestTransport`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AblySyncer {
     transport: Arc<dyn SyncTransport>,
     device_id: Arc<str>,
     state: Arc<Mutex<SyncerState>>,
+}
+
+impl std::fmt::Debug for AblySyncer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AblySyncer")
+            .field("device_id", &self.device_id)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -720,6 +637,7 @@ fn collect_events(node: &FileNode, out: &mut Vec<SyncEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use domain::DomainError;
     use std::sync::Arc;
 
     fn write(path: &str, size: u64, mtime: u64) -> SyncEvent {
