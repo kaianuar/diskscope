@@ -7,6 +7,7 @@ import { useScan } from './hooks/useScan';
 import { useSelection } from './hooks/useSelection';
 import { useShortcuts } from './hooks/useShortcuts';
 import { deletePaths, openFile, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
+import { parentOf } from './lib/pathUtils';
 import { TreemapCanvas2D } from './components/TreemapCanvas2D';
 import { TableView } from './components/TableView';
 import { Toolbar } from './components/Toolbar';
@@ -96,8 +97,7 @@ export function App() {
     if (!scan.result) return;
     const rootPath = scan.result.root.path;
     if (!currentPath || currentPath === rootPath) return;
-    const sep = currentPath.includes('\\') ? '\\' : '/';
-    const parent = currentPath.slice(0, currentPath.lastIndexOf(sep));
+    const parent = parentOf(currentPath);
     navigateTo(parent.length > 0 ? parent : rootPath);
   }, [currentPath, scan.result, navigateTo]);
 
@@ -182,7 +182,7 @@ export function App() {
       if (!scan.result) return;
       const rootPath = scan.result.root.path;
       if (!currentPath || currentPath === rootPath) return;
-      const parent = currentPath.slice(0, currentPath.lastIndexOf('/'));
+      const parent = parentOf(currentPath);
       setCurrentPath(parent.length > 0 ? parent : rootPath);
     },
     onDelete: () => void handleDelete(),
