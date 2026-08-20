@@ -72,6 +72,11 @@ pub struct ScanArgs {
     /// Suppress the summary line written to stderr after the result.
     #[arg(long)]
     pub quiet: bool,
+
+    /// Export an interactive HTML snapshot to FILE (self-contained treemap + table).
+    /// When present, `--format` is ignored and the result is written to FILE.
+    #[arg(long, value_name = "FILE")]
+    pub export: Option<std::path::PathBuf>,
 }
 
 impl ScanArgs {

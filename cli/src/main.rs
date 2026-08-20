@@ -15,6 +15,7 @@
 
 mod cli;
 
+use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -68,7 +69,6 @@ fn run_scan(cmd: cli::ScanArgs) -> anyhow::Result<()> {
     if cmd.path.is_empty() {
         return Err(DomainError::InvalidPath("path must not be empty".into()).into());
     }
-    let fmt = cmd.format();
     let service = service();
     let mut result = service.scan(&cmd.path)?;
 
@@ -79,6 +79,28 @@ fn run_scan(cmd: cli::ScanArgs) -> anyhow::Result<()> {
         result = scan_engine::filter::apply_filter(&result, &filter);
     }
 
+    // --export takes precedence: write a self-contained HTML snapshot.
+    if let Some(ref export_path) = cmd.export {
+        if let Some(parent) = export_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        let title = std::path::Path::new(&cmd.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| cmd.path.clone());
+        let html = scan_engine::snapshot::render_html_snapshot(
+            &result,
+            &title,
+            scan_engine::snapshot::DEFAULT_MAX_NODES,
+        );
+        fs::write(export_path, html)?;
+        eprintln!("Snapshot written to {}", export_path.display());
+        return Ok(());
+    }
+
+    let fmt = cmd.format();
     let out = io::stdout();
     let mut lock = out.lock();
     scan_engine::format::render(&result, fmt, &mut lock)?;
