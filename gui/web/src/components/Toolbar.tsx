@@ -1,5 +1,7 @@
 // Toolbar: scan status, progress, cancel + rescan, navigation buttons.
 
+export type ThemeName = 'dark' | 'light';
+
 export interface ToolbarProps {
   scanning: boolean;
   progress: number | null;
@@ -11,6 +13,8 @@ export interface ToolbarProps {
   onGoBack: () => void;
   canGoForward: boolean;
   onGoForward: () => void;
+  theme: ThemeName;
+  onToggleTheme: () => void;
 }
 
 export function Toolbar({
@@ -24,6 +28,8 @@ export function Toolbar({
   onGoBack,
   canGoForward,
   onGoForward,
+  theme,
+  onToggleTheme,
 }: ToolbarProps) {
   return (
     <div className="toolbar" data-testid="toolbar">
@@ -69,6 +75,15 @@ export function Toolbar({
           Rescan
         </button>
       )}
+      <button
+        type="button"
+        className="toolbar-nav-btn"
+        data-testid="theme-toggle"
+        onClick={onToggleTheme}
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      >
+        {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+      </button>
     </div>
   );
 }

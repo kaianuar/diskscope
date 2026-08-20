@@ -2,7 +2,7 @@
 // status bar. Owns scan state and wires keyboard shortcuts + context
 // menu actions.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useScan } from './hooks/useScan';
 import { useSelection } from './hooks/useSelection';
 import { useShortcuts } from './hooks/useShortcuts';
@@ -10,7 +10,7 @@ import { deletePaths, openFile, undoLastDelete, type Filter, type SortColumn, ty
 import { parentOf } from './lib/pathUtils';
 import { TreemapCanvas2D } from './components/TreemapCanvas2D';
 import { TableView } from './components/TableView';
-import { Toolbar } from './components/Toolbar';
+import { Toolbar, type ThemeName } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { FilterPanel } from './components/FilterPanel';
 import { StatusBar } from './components/StatusBar';
@@ -40,6 +40,20 @@ export function App() {
   const [ctxMenu, setCtxMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [histIndex, setHistIndex] = useState(-1);
+  const [theme, setTheme] = useState<ThemeName>(() => {
+    const saved = localStorage.getItem('diskscope-theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('diskscope-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+  }, []);
+
   const quickPaths = useMemo(homeQuickPaths, []);
 
   const currentEntries = useMemo(() => {
@@ -210,6 +224,8 @@ export function App() {
           onGoBack={goBack}
           canGoForward={histIndex < history.length - 1}
           onGoForward={goForward}
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
         <Breadcrumb
           path={currentPath}
