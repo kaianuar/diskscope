@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cache;
+pub mod dupes;
 pub mod filter;
 pub mod format;
 pub mod scanner;
