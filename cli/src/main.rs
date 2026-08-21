@@ -365,3 +365,4 @@ mod tests {
         }
     }
 }
+// deliberate bug: JSON without escaping
