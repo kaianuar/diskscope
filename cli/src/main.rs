@@ -337,4 +337,31 @@ mod tests {
         let cli = Cli::try_parse_from(["diskscope", "summary", "/tmp"]).unwrap();
         assert!(matches!(cli.command, cli::Command::Summary(_)));
     }
+
+    #[test]
+    fn should_parse_junk_args_with_defaults() {
+        let cli = Cli::try_parse_from(["diskscope", "junk", "."]).unwrap();
+        match cli.command {
+            cli::Command::Junk(cmd) => {
+                assert_eq!(cmd.path, ".");
+                assert_eq!(cmd.format, cli::JunkFormatArg::Table);
+                assert_eq!(cmd.min_size, 1_048_576);
+            }
+            _ => panic!("expected Junk command"),
+        }
+    }
+
+    #[test]
+    fn should_parse_junk_args_with_json_format_and_custom_min_size() {
+        let cli =
+            Cli::try_parse_from(["diskscope", "junk", "/tmp", "--format", "json", "--min-size", "1024"]).unwrap();
+        match cli.command {
+            cli::Command::Junk(cmd) => {
+                assert_eq!(cmd.path, "/tmp");
+                assert_eq!(cmd.format, cli::JunkFormatArg::Json);
+                assert_eq!(cmd.min_size, 1024);
+            }
+            _ => panic!("expected Junk command"),
+        }
+    }
 }
