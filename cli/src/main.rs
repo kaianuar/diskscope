@@ -271,6 +271,9 @@ fn run_junk(cmd: cli::JunkArgs) -> anyhow::Result<()> {
             writeln!(lock, "  \"items\": [")?;
             for (i, item) in items.iter().enumerate() {
                 let comma = if i + 1 < items.len() { "," } else { "" };
+                // DELIBERATE BUG: no escaping of path/rule_name — broken JSON
+                // if a path contains a quote or backslash. (Test fixture for
+                // the fix-round loop; the correct fix uses serde_json.)
                 writeln!(
                     lock,
                     "    {{\"path\": \"{}\", \"size\": {}, \"rule_name\": \"{}\", \"category\": \"{:?}\"}}{}",
