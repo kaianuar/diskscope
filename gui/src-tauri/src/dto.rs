@@ -10,8 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use domain::ports::Scanner;
 use domain::dupes::{DuplicateGroup, DuplicateReport};
+use domain::ports::Scanner;
 use domain::{DomainError, FileNode, FileType, Filter, PathError, ScanResult};
 
 /// JSON value used to serialise [`std::io::ErrorKind`] (an enum with

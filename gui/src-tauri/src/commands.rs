@@ -99,9 +99,8 @@ pub fn find_duplicates(
     runner: State<'_, ScanRunner>,
     min_size: Option<u64>,
 ) -> Result<DuplicateReportDto, CommandErrorDto> {
-    let result = runner.result().ok_or_else(|| {
-        CommandErrorDto::Io("no scan result available".into())
-    })?;
+    let result =
+        runner.result().ok_or_else(|| CommandErrorDto::Io("no scan result available".into()))?;
     let report = scan_engine::dupes::find_duplicates(
         &result.root,
         min_size.unwrap_or(scan_engine::dupes::DEFAULT_MIN_SIZE),

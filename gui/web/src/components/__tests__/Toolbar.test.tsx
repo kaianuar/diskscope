@@ -17,6 +17,7 @@ const defaultProps = {
   onGoForward: vi.fn(),
   theme: 'dark' as const,
   onToggleTheme: vi.fn(),
+  canShowDuplicates: false,
 };
 
 describe('Toolbar', () => {

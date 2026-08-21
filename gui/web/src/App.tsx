@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useScan } from './hooks/useScan';
 import { useSelection } from './hooks/useSelection';
 import { useShortcuts } from './hooks/useShortcuts';
-import { deletePaths, openFile, undoLastDelete, type Filter, type SortColumn, type SortDirection } from './ipc';
+import { deletePaths, findDuplicates, openFile, revealInExplorer, undoLastDelete, type DuplicateReport, type Filter, type SortColumn, type SortDirection } from './ipc';
 import { parentOf } from './lib/pathUtils';
 import { TreemapCanvas2D } from './components/TreemapCanvas2D';
 import { TableView } from './components/TableView';
@@ -16,6 +16,7 @@ import { FilterPanel } from './components/FilterPanel';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { Breadcrumb } from './components/Breadcrumb';
+import { DuplicatesView } from './components/DuplicatesView';
 
 // Quick-scan shortcuts: OS-aware home dir + root.
 function homeQuickPaths(): { label: string; path: string }[] {
@@ -44,6 +45,10 @@ export function App() {
     const saved = localStorage.getItem('diskscope-theme');
     return saved === 'light' ? 'light' : 'dark';
   });
+  const [view, setView] = useState<'files' | 'duplicates'>('files');
+  const [dupeReport, setDupeReport] = useState<DuplicateReport | null>(null);
+  const [dupesLoading, setDupesLoading] = useState(false);
+  const [dupesError, setDupesError] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -52,6 +57,26 @@ export function App() {
 
   const toggleTheme = useCallback(() => {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+  }, []);
+
+  const openDuplicates = useCallback(async () => {
+    setView('duplicates');
+    if (!dupeReport) {
+      setDupesLoading(true);
+      setDupesError(null);
+      try {
+        const report = await findDuplicates();
+        setDupeReport(report);
+      } catch (err) {
+        setDupesError(String(err));
+      } finally {
+        setDupesLoading(false);
+      }
+    }
+  }, [dupeReport]);
+
+  const closeDuplicates = useCallback(() => {
+    setView('files');
   }, []);
 
   const quickPaths = useMemo(homeQuickPaths, []);
@@ -207,7 +232,11 @@ export function App() {
     <div className="app-shell" data-testid="app-shell">
       <div className="app-sidebar">
         <Sidebar
-          onScan={(p) => void scan.start(p, filter)}
+          onScan={(p) => {
+            setView('files');
+            setDupeReport(null);
+            void scan.start(p, filter);
+          }}
           scanning={scan.progress !== null}
           quickPaths={quickPaths}
         />
@@ -226,6 +255,8 @@ export function App() {
           onGoForward={goForward}
           theme={theme}
           onToggleTheme={toggleTheme}
+          canShowDuplicates={!!scan.result}
+          onShowDuplicates={() => void openDuplicates()}
         />
         <Breadcrumb
           path={currentPath}
@@ -233,24 +264,39 @@ export function App() {
           onNavigate={navigateTo}
         />
         <FilterPanel value={filter} onChange={setFilter} />
-        <div className="app-content">
-          <TreemapCanvas2D
-            root={scan.result?.root ?? { path: '', size: 0, modified: 0, fileType: 'directory', children: [] }}
-            hoveredIndex={hoveredIndex}
-            actionableIndex={actionableIndex}
-            onHover={handleTreemapHover}
-            onActivate={handleActivate}
-            onOpen={handleOpen}
+        {view === 'files' ? (
+          <div className="app-content">
+            <TreemapCanvas2D
+              root={scan.result?.root ?? { path: '', size: 0, modified: 0, fileType: 'directory', children: [] }}
+              hoveredIndex={hoveredIndex}
+              actionableIndex={actionableIndex}
+              onHover={handleTreemapHover}
+              onActivate={handleActivate}
+              onOpen={handleOpen}
+            />
+            <TableView
+              entries={currentEntries}
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              onActivate={(entry) => handleActivate({ node: entry })}
+              onContextMenu={handleContextMenu}
+            />
+          </div>
+        ) : (
+          <DuplicatesView
+            report={dupeReport}
+            loading={dupesLoading}
+            error={dupesError}
+            onBack={closeDuplicates}
+            onDelete={async (paths) => {
+              await deletePaths(paths);
+              setDupeReport(null);
+            }}
+            onReveal={revealInExplorer}
+            onOpen={openFile}
           />
-          <TableView
-            entries={currentEntries}
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            onActivate={(entry) => handleActivate({ node: entry })}
-            onContextMenu={handleContextMenu}
-          />
-        </div>
+        )}
         <StatusBar
           result={scan.result}
           error={scan.error}

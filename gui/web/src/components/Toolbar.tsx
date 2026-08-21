@@ -15,6 +15,8 @@ export interface ToolbarProps {
   onGoForward: () => void;
   theme: ThemeName;
   onToggleTheme: () => void;
+  onShowDuplicates?: () => void;
+  canShowDuplicates: boolean;
 }
 
 export function Toolbar({
@@ -30,6 +32,8 @@ export function Toolbar({
   onGoForward,
   theme,
   onToggleTheme,
+  onShowDuplicates,
+  canShowDuplicates,
 }: ToolbarProps) {
   return (
     <div className="toolbar" data-testid="toolbar">
@@ -84,6 +88,16 @@ export function Toolbar({
       >
         {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
       </button>
+      {canShowDuplicates && onShowDuplicates && (
+        <button
+          type="button"
+          data-testid="view-duplicates"
+          onClick={onShowDuplicates}
+          title="Find and manage duplicate files"
+        >
+          Duplicates
+        </button>
+      )}
     </div>
   );
 }
