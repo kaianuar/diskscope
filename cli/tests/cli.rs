@@ -243,6 +243,43 @@ fn should_exit_5_when_scan_path_does_not_exist() {
         .stderr(predicate::str::contains("not found"));
 }
 
+// ── dupes ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn should_find_duplicates_when_dupes_command_runs_against_fixture() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let content = vec![0xAB_u8; 4096];
+    std::fs::write(dir.path().join("copy_a.bin"), &content).expect("write copy_a");
+    std::fs::write(dir.path().join("copy_b.bin"), &content).expect("write copy_b");
+    std::fs::write(dir.path().join("unique.bin"), vec![0xCC_u8; 4096]).expect("write unique");
+
+    let out = bin()
+        .args(["dupes", dir.path().to_str().unwrap(), "--min-size", "0"])
+        .output()
+        .expect("run dupes");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("copy_a.bin"), "expected copy_a.bin in output: {stdout}");
+    assert!(stdout.contains("copy_b.bin"), "expected copy_b.bin in output: {stdout}");
+    assert!(stdout.contains("Total recoverable"), "expected recoverable summary: {stdout}");
+    assert!(!stdout.contains("unique.bin"), "unique file should not appear: {stdout}");
+}
+
+#[test]
+fn should_report_no_duplicates_when_fixture_has_none() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    std::fs::write(dir.path().join("a.bin"), vec![0xAA_u8; 1024]).expect("write a");
+    std::fs::write(dir.path().join("b.bin"), vec![0xBB_u8; 1024]).expect("write b");
+
+    let out = bin()
+        .args(["dupes", dir.path().to_str().unwrap(), "--min-size", "0"])
+        .output()
+        .expect("run dupes");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("No duplicate files found"), "expected no-dupes message: {stdout}");
+}
+
 // ── snapshot export ───────────────────────────────────────────────────────
 
 #[test]

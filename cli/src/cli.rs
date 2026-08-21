@@ -29,6 +29,8 @@ pub enum Command {
     Delete(DeleteArgs),
     /// Emit a shell completion script.
     Completions(CompletionsArgs),
+    /// Find duplicate files by content hash.
+    Dupes(DupesArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -216,4 +218,15 @@ pub struct CompletionsArgs {
     /// Target shell.
     #[arg(value_name = "SHELL")]
     pub shell: Shell,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DupesArgs {
+    /// Directory to scan for duplicates.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Minimum file size in bytes to consider (default: 1 MiB).
+    #[arg(long, default_value_t = 1_048_576)]
+    pub min_size: u64,
 }
