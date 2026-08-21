@@ -31,6 +31,8 @@ pub enum Command {
     Completions(CompletionsArgs),
     /// Find duplicate files by content hash.
     Dupes(DupesArgs),
+    /// Detect regenerable junk/cache directories in a scanned tree.
+    Junk(JunkArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -229,4 +231,30 @@ pub struct DupesArgs {
     /// Minimum file size in bytes to consider (default: 1 MiB).
     #[arg(long, default_value_t = 1_048_576)]
     pub min_size: u64,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct JunkArgs {
+    /// Directory to scan for junk.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Output format: table, json, or jsonl.
+    #[arg(long, value_name = "FORMAT", value_enum, default_value_t = JunkFormatArg::Table)]
+    pub format: JunkFormatArg,
+
+    /// Minimum item size in bytes to report (default: 1 MiB).
+    #[arg(long, default_value_t = 1_048_576)]
+    pub min_size: u64,
+}
+
+/// Output format for the junk subcommand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum JunkFormatArg {
+    /// Aligned table columns (default).
+    Table,
+    /// Single JSON object.
+    Json,
+    /// One JSON object per line.
+    Jsonl,
 }

@@ -23,6 +23,7 @@ use std::io;
 use std::path::Path;
 
 pub mod dupes;
+pub mod junk;
 pub mod ports;
 
 #[cfg(feature = "sync")]

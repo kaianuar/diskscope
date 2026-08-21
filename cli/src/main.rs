@@ -59,6 +59,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         cli::Command::Delete(cmd) => run_delete(cmd),
         cli::Command::Completions(cmd) => run_completions(cmd),
         cli::Command::Dupes(cmd) => run_dupes(cmd),
+        cli::Command::Junk(cmd) => run_junk(cmd),
     }
 }
 
@@ -225,6 +226,73 @@ fn run_dupes(cmd: cli::DupesArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_junk(cmd: cli::JunkArgs) -> anyhow::Result<()> {
+    if cmd.path.is_empty() {
+        return Err(DomainError::InvalidPath("path must not be empty".into()).into());
+    }
+    let svc = service();
+    let result = svc.scan(&cmd.path)?;
+    let report = scan_engine::junk::find_junk(&result.root);
+
+    // Filter by min_size.
+    let items: Vec<_> = report.items.into_iter().filter(|i| i.size >= cmd.min_size).collect();
+    let total_recoverable: u64 = items.iter().map(|i| i.size).sum();
+
+    let out = io::stdout();
+    let mut lock = out.lock();
+
+    if items.is_empty() {
+        writeln!(lock, "No junk directories found.")?;
+        return Ok(());
+    }
+
+    match cmd.format {
+        cli::JunkFormatArg::Table => {
+            writeln!(
+                lock,
+                "Found {} junk director{} totaling {}:",
+                items.len(),
+                if items.len() == 1 { "y" } else { "ies" },
+                domain::format_size(total_recoverable),
+            )?;
+            for item in &items {
+                writeln!(
+                    lock,
+                    "  {:>10}  {}  ({})",
+                    domain::format_size(item.size),
+                    item.path,
+                    item.rule_name,
+                )?;
+            }
+        }
+        cli::JunkFormatArg::Json => {
+            writeln!(lock, "{{")?;
+            writeln!(lock, "  \"total_recoverable\": {total_recoverable},")?;
+            writeln!(lock, "  \"items\": [")?;
+            for (i, item) in items.iter().enumerate() {
+                let comma = if i + 1 < items.len() { "," } else { "" };
+                writeln!(
+                    lock,
+                    "    {{\"path\": \"{}\", \"size\": {}, \"rule_name\": \"{}\", \"category\": \"{:?}\"}}{}",
+                    item.path, item.size, item.rule_name, item.category, comma,
+                )?;
+            }
+            writeln!(lock, "  ]")?;
+            writeln!(lock, "}}")?;
+        }
+        cli::JunkFormatArg::Jsonl => {
+            for item in &items {
+                writeln!(
+                    lock,
+                    "{{\"path\": \"{}\", \"size\": {}, \"rule_name\": \"{}\", \"category\": \"{:?}\"}}",
+                    item.path, item.size, item.rule_name, item.category,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 // Unit tests for the small wrappers (format defaulting, format parsing).
 #[cfg(test)]
 mod tests {
@@ -268,5 +336,32 @@ mod tests {
     fn should_print_total_and_count_and_top10_when_summary_invoked() {
         let cli = Cli::try_parse_from(["diskscope", "summary", "/tmp"]).unwrap();
         assert!(matches!(cli.command, cli::Command::Summary(_)));
+    }
+
+    #[test]
+    fn should_parse_junk_args_with_defaults() {
+        let cli = Cli::try_parse_from(["diskscope", "junk", "."]).unwrap();
+        match cli.command {
+            cli::Command::Junk(cmd) => {
+                assert_eq!(cmd.path, ".");
+                assert_eq!(cmd.format, cli::JunkFormatArg::Table);
+                assert_eq!(cmd.min_size, 1_048_576);
+            }
+            _ => panic!("expected Junk command"),
+        }
+    }
+
+    #[test]
+    fn should_parse_junk_args_with_json_format_and_custom_min_size() {
+        let cli =
+            Cli::try_parse_from(["diskscope", "junk", "/tmp", "--format", "json", "--min-size", "1024"]).unwrap();
+        match cli.command {
+            cli::Command::Junk(cmd) => {
+                assert_eq!(cmd.path, "/tmp");
+                assert_eq!(cmd.format, cli::JunkFormatArg::Json);
+                assert_eq!(cmd.min_size, 1024);
+            }
+            _ => panic!("expected Junk command"),
+        }
     }
 }

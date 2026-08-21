@@ -29,6 +29,7 @@
 pub mod cache;
 pub mod dupes;
 pub mod filter;
+pub mod junk;
 pub mod format;
 pub mod scanner;
 pub mod snapshot;
