@@ -51,6 +51,7 @@ pub fn run() {
             commands::reveal_in_explorer,
             commands::open_file,
             commands::get_scan_result,
+            commands::find_duplicates,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

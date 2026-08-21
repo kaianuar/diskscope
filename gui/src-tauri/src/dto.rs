@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use domain::ports::Scanner;
+use domain::dupes::{DuplicateGroup, DuplicateReport};
 use domain::{DomainError, FileNode, FileType, Filter, PathError, ScanResult};
 
 /// JSON value used to serialise [`std::io::ErrorKind`] (an enum with
@@ -281,6 +282,46 @@ impl From<CommandErrorDto> for DomainError {
     }
 }
 
+/// Mirror of [`domain::dupes::DuplicateGroup`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateGroupDto {
+    /// Hex-encoded SHA-256 content hash.
+    pub hash: String,
+    /// Size in bytes of each file in the group.
+    pub size: u64,
+    /// Absolute paths of the duplicate files.
+    pub files: Vec<String>,
+}
+
+impl From<&DuplicateGroup> for DuplicateGroupDto {
+    fn from(g: &DuplicateGroup) -> Self {
+        Self { hash: g.hash.clone(), size: g.size, files: g.files.clone() }
+    }
+}
+
+/// Mirror of [`domain::dupes::DuplicateReport`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateReportDto {
+    /// Groups of files with identical content.
+    pub groups: Vec<DuplicateGroupDto>,
+    /// Sum of recoverable bytes across all groups.
+    #[serde(rename = "totalRecoverable")]
+    pub total_recoverable: u64,
+    /// Total number of extra (duplicate) files.
+    #[serde(rename = "totalDuplicateFiles")]
+    pub total_duplicate_files: usize,
+}
+
+impl From<&DuplicateReport> for DuplicateReportDto {
+    fn from(r: &DuplicateReport) -> Self {
+        Self {
+            groups: r.groups.iter().map(DuplicateGroupDto::from).collect(),
+            total_recoverable: r.total_recoverable,
+            total_duplicate_files: r.total_duplicate_files,
+        }
+    }
+}
+
 /// The `Scanner` port is object-safe, so `ScanService` can hand it to
 /// the GUI as a `Box<dyn Scanner>` state handle without leaking the
 /// concrete adapter type.
@@ -361,5 +402,31 @@ mod tests {
         let back = dto.to_domain();
         assert_eq!(back.total_size, 100);
         assert_eq!(back.root.children[0].file_type, FileType::Document);
+    }
+
+    #[test]
+    fn duplicate_report_dto_from_domain() {
+        use domain::dupes::{DuplicateGroup, DuplicateReport};
+
+        let report = DuplicateReport {
+            groups: vec![DuplicateGroup {
+                hash: "abc123".into(),
+                size: 1024,
+                files: vec!["/a.txt".into(), "/b.txt".into()],
+            }],
+            total_recoverable: 1024,
+            total_duplicate_files: 1,
+        };
+        let dto = DuplicateReportDto::from(&report);
+        assert_eq!(dto.groups.len(), 1);
+        assert_eq!(dto.groups[0].hash, "abc123");
+        assert_eq!(dto.groups[0].size, 1024);
+        assert_eq!(dto.groups[0].files, vec!["/a.txt", "/b.txt"]);
+        assert_eq!(dto.total_recoverable, 1024);
+        assert_eq!(dto.total_duplicate_files, 1);
+
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(json["totalRecoverable"], serde_json::json!(1024));
+        assert_eq!(json["totalDuplicateFiles"], serde_json::json!(1));
     }
 }

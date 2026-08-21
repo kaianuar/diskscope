@@ -7,7 +7,7 @@
 
 use tauri::{AppHandle, State};
 
-use crate::dto::{CommandErrorDto, FilterDto};
+use crate::dto::{CommandErrorDto, DuplicateReportDto, FilterDto};
 use crate::scan_runner::{ScanId, ScanRunner};
 
 /// Start a scan of `path`, optionally applying `filter` (the GUI sends
@@ -87,4 +87,49 @@ pub fn get_scan_result(
     runner: State<'_, ScanRunner>,
 ) -> Result<Option<crate::dto::ScanResultDto>, CommandErrorDto> {
     Ok(runner.result().map(|r| crate::dto::ScanResultDto::from(&*r)))
+}
+
+/// Find duplicate files in the current scan result. Returns a
+/// [`DuplicateReportDto`] with groups of files sharing identical content.
+///
+/// `min_size` defaults to 1 MiB when `None`. The backend caps at 5000
+/// candidate groups to bound I/O.
+#[tauri::command]
+pub fn find_duplicates(
+    runner: State<'_, ScanRunner>,
+    min_size: Option<u64>,
+) -> Result<DuplicateReportDto, CommandErrorDto> {
+    let result = runner.result().ok_or_else(|| {
+        CommandErrorDto::Io("no scan result available".into())
+    })?;
+    let report = scan_engine::dupes::find_duplicates(
+        &result.root,
+        min_size.unwrap_or(scan_engine::dupes::DEFAULT_MIN_SIZE),
+        5000,
+    );
+    Ok(DuplicateReportDto::from(&report))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain::dupes::{DuplicateGroup, DuplicateReport};
+
+    #[test]
+    fn should_convert_duplicate_report_to_dto() {
+        let report = DuplicateReport {
+            groups: vec![DuplicateGroup {
+                hash: "deadbeef".into(),
+                size: 2048,
+                files: vec!["/a.bin".into(), "/b.bin".into(), "/c.bin".into()],
+            }],
+            total_recoverable: 4096,
+            total_duplicate_files: 2,
+        };
+        let dto = DuplicateReportDto::from(&report);
+        assert_eq!(dto.groups.len(), 1);
+        assert_eq!(dto.groups[0].files.len(), 3);
+        assert_eq!(dto.total_recoverable, 4096);
+        assert_eq!(dto.total_duplicate_files, 2);
+    }
 }
