@@ -23,8 +23,10 @@ use clap::Parser;
 
 use cli::Cli;
 
+use domain::junk::JunkItem;
 use domain::{DomainError, FileNode, ScanResult, SortColumn, SortDirection, SortSpec};
 use scan_engine::ScanService;
+use serde::Serialize;
 
 /// Exit code for usage errors (clap also uses 2 for parse failures).
 const EXIT_USAGE: u8 = 2;
@@ -226,6 +228,26 @@ fn run_dupes(cmd: cli::DupesArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Serializable mirror of [`JunkItem`] for JSON output.
+#[derive(Serialize)]
+struct JunkItemDto {
+    path: String,
+    size: u64,
+    rule_name: &'static str,
+    category: String,
+}
+
+impl From<&JunkItem> for JunkItemDto {
+    fn from(item: &JunkItem) -> Self {
+        Self {
+            path: item.path.clone(),
+            size: item.size,
+            rule_name: item.rule_name,
+            category: format!("{:?}", item.category),
+        }
+    }
+}
+
 fn run_junk(cmd: cli::JunkArgs) -> anyhow::Result<()> {
     if cmd.path.is_empty() {
         return Err(DomainError::InvalidPath("path must not be empty".into()).into());
@@ -266,27 +288,19 @@ fn run_junk(cmd: cli::JunkArgs) -> anyhow::Result<()> {
             }
         }
         cli::JunkFormatArg::Json => {
-            writeln!(lock, "{{")?;
-            writeln!(lock, "  \"total_recoverable\": {total_recoverable},")?;
-            writeln!(lock, "  \"items\": [")?;
-            for (i, item) in items.iter().enumerate() {
-                let comma = if i + 1 < items.len() { "," } else { "" };
-                writeln!(
-                    lock,
-                    "    {{\"path\": \"{}\", \"size\": {}, \"rule_name\": \"{}\", \"category\": \"{:?}\"}}{}",
-                    item.path, item.size, item.rule_name, item.category, comma,
-                )?;
-            }
-            writeln!(lock, "  ]")?;
-            writeln!(lock, "}}")?;
+            let dtos: Vec<JunkItemDto> = items.iter().map(JunkItemDto::from).collect();
+            let output = serde_json::json!({
+                "total_recoverable": total_recoverable,
+                "items": dtos,
+            });
+            serde_json::to_writer_pretty(&mut lock, &output)?;
+            writeln!(lock)?;
         }
         cli::JunkFormatArg::Jsonl => {
             for item in &items {
-                writeln!(
-                    lock,
-                    "{{\"path\": \"{}\", \"size\": {}, \"rule_name\": \"{}\", \"category\": \"{:?}\"}}",
-                    item.path, item.size, item.rule_name, item.category,
-                )?;
+                let dto = JunkItemDto::from(item);
+                serde_json::to_writer(&mut lock, &dto)?;
+                writeln!(lock)?;
             }
         }
     }
