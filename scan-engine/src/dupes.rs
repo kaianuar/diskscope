@@ -46,7 +46,7 @@ pub fn find_duplicates(root: &FileNode, min_size: u64, max_candidates: usize) ->
     let mut candidates_examined = 0usize;
     let mut full_hash_targets: Vec<&FileNode> = Vec::new();
 
-    for (_size, group) in &by_size {
+    for group in by_size.values() {
         if group.len() < 2 {
             continue;
         }
@@ -87,7 +87,7 @@ pub fn find_duplicates(root: &FileNode, min_size: u64, max_candidates: usize) ->
     }
 
     // Sort largest recoverable first.
-    groups.sort_by(|a, b| b.recoverable_bytes().cmp(&a.recoverable_bytes()));
+    groups.sort_by_key(|b| std::cmp::Reverse(b.recoverable_bytes()));
 
     DuplicateReport { groups, total_recoverable, total_duplicate_files }
 }

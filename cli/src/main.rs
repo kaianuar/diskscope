@@ -58,6 +58,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         cli::Command::Summary(cmd) => run_summary(cmd),
         cli::Command::Delete(cmd) => run_delete(cmd),
         cli::Command::Completions(cmd) => run_completions(cmd),
+        cli::Command::Dupes(cmd) => run_dupes(cmd),
     }
 }
 
@@ -179,6 +180,48 @@ fn run_completions(cmd: cli::CompletionsArgs) -> anyhow::Result<()> {
 
     let mut command = cli::Cli::command();
     generate(cmd.shell, &mut command, "diskscope", &mut io::stdout());
+    Ok(())
+}
+
+fn run_dupes(cmd: cli::DupesArgs) -> anyhow::Result<()> {
+    if cmd.path.is_empty() {
+        return Err(DomainError::InvalidPath("path must not be empty".into()).into());
+    }
+    let svc = service();
+    let result = svc.scan(&cmd.path)?;
+    let report = scan_engine::dupes::find_duplicates(&result.root, cmd.min_size, 5000);
+
+    let out = io::stdout();
+    let mut lock = out.lock();
+
+    if report.groups.is_empty() {
+        writeln!(lock, "No duplicate files found.")?;
+        return Ok(());
+    }
+
+    for (i, group) in report.groups.iter().enumerate() {
+        let short_hash = &group.hash[..12.min(group.hash.len())];
+        writeln!(
+            lock,
+            "Group {} — hash {}…  size {}  recoverable {}",
+            i + 1,
+            short_hash,
+            domain::format_size(group.size),
+            domain::format_size(group.recoverable_bytes()),
+        )?;
+        for path in &group.files {
+            writeln!(lock, "  {path}")?;
+        }
+        writeln!(lock)?;
+    }
+
+    writeln!(
+        lock,
+        "Total recoverable: {} ({} duplicate file{})",
+        domain::format_size(report.total_recoverable),
+        report.total_duplicate_files,
+        if report.total_duplicate_files == 1 { "" } else { "s" },
+    )?;
     Ok(())
 }
 
