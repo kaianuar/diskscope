@@ -50,6 +50,18 @@ export type CommandError =
 export type SortColumn = 'name' | 'size' | 'modified' | 'type';
 export type SortDirection = 'asc' | 'desc';
 
+export interface DuplicateGroup {
+  hash: string;
+  size: number;
+  files: string[];
+}
+
+export interface DuplicateReport {
+  groups: DuplicateGroup[];
+  totalRecoverable: number;
+  totalDuplicateFiles: number;
+}
+
 /** Start a scan of `path`, returning the scan id. */
 export function startScan(path: string, filter?: Filter): Promise<number> {
   return invoke<number>('start_scan', { path, filter: filter ?? null });
@@ -83,6 +95,11 @@ export function openFile(path: string): Promise<void> {
 /** Fetch the finished scan result, if any. */
 export function getScanResult(): Promise<ScanResult | null> {
   return invoke<ScanResult | null>('get_scan_result');
+}
+
+/** Find duplicate files in the current scan result. */
+export function findDuplicates(minSize?: number): Promise<DuplicateReport> {
+  return invoke<DuplicateReport>('find_duplicates', { minSize: minSize ?? 1_048_576 });
 }
 
 /** Decode a CommandError from an invoke rejection into a typed error. */
