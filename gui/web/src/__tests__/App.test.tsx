@@ -15,6 +15,8 @@ vi.mock('../../ipc', () => ({
   deletePaths: vi.fn(() => Promise.resolve()),
   undoLastDelete: vi.fn(() => Promise.resolve()),
   openFile: vi.fn(() => Promise.resolve()),
+  revealInExplorer: vi.fn(() => Promise.resolve()),
+  findDuplicates: vi.fn(() => Promise.resolve({ groups: [], totalRecoverable: 0, totalDuplicateFiles: 0 })),
 }));
 
 describe('App theme', () => {

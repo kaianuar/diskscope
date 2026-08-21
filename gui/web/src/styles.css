@@ -300,3 +300,163 @@ button:disabled {
 .context-menu button:hover {
   background: var(--ds-primary);
 }
+
+/* ── Duplicates view ────────────────────────────────────────────── */
+
+.dupes-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-md);
+  padding: var(--ds-spacing-md);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.dupes-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-spacing-md);
+}
+
+.dupes-back-btn {
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  border: 1px solid var(--ds-surface);
+  border-radius: var(--ds-radius-sm);
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dupes-back-btn:hover {
+  border-color: var(--ds-primary);
+  color: var(--ds-primary);
+}
+
+.dupes-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dupes-summary {
+  color: var(--ds-accent);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dupes-loading,
+.dupes-empty,
+.dupes-error {
+  padding: var(--ds-spacing-lg);
+  text-align: center;
+  color: var(--ds-muted);
+  font-size: 14px;
+}
+
+.dupes-error {
+  color: var(--ds-danger);
+}
+
+.dupes-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-sm);
+}
+
+.dupe-group {
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius-md);
+  overflow: hidden;
+}
+
+.dupe-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-spacing-sm);
+  padding: var(--ds-spacing-sm) var(--ds-spacing-md);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dupe-group-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dupe-chevron {
+  color: var(--ds-muted);
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+}
+
+.dupe-recoverable {
+  color: var(--ds-accent);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dupe-file-count {
+  color: var(--ds-muted);
+  font-size: 13px;
+}
+
+.dupe-delete-btn {
+  margin-left: auto;
+  background: var(--ds-danger);
+  color: #fff;
+  border: none;
+  border-radius: var(--ds-radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dupe-delete-btn:hover {
+  opacity: 0.85;
+}
+
+.dupe-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.dupe-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-spacing-sm);
+  padding: 4px var(--ds-spacing-md) 4px 36px;
+  font-size: 13px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dupe-row.is-keeper {
+  border-left: 3px solid var(--ds-success);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.dupe-keeper-marker {
+  color: var(--ds-success);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 56px;
+}
+
+.dupe-check {
+  accent-color: var(--ds-primary);
+  min-width: 56px;
+}
+
+.dupe-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dupe-size {
+  color: var(--ds-muted);
+  white-space: nowrap;
+}
